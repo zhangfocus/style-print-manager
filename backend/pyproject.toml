@@ -1,0 +1,25 @@
+[project]
+name = "style-print-manager-backend"
+version = "0.1.0"
+description = "款式印花管理系统 - Backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "sqlalchemy>=2.0.0",
+    "pymysql>=1.1.0",
+    "python-dotenv>=1.0.0",
+    "openpyxl>=3.1.0",
+    "aiofiles>=23.0.0",
+    "python-multipart>=0.0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.uv]
+dev-dependencies = []
