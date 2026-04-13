@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Float, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -9,11 +9,45 @@ class Style(Base):
     __tablename__ = "styles"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(64), unique=True, nullable=False, index=True, comment="款式编号")
-    name = Column(String(128), nullable=False, comment="款式名称")
-    category = Column(String(64), nullable=True, comment="品类")
-    color = Column(String(64), nullable=True, comment="颜色")
-    description = Column(Text, nullable=True, comment="备注")
+    # 白坯款式编码 — 唯一标识
+    code = Column(String(256), unique=True, nullable=False, index=True, comment="白坯款式编码")
+    # 商品款号
+    product_code = Column(String(64), nullable=True, index=True, comment="商品款号")
+    # 基础分类属性
+    brand_attr = Column(String(64), nullable=True, comment="品牌属性")
+    attr = Column(String(64), nullable=True, comment="属性")
+    fabric_type = Column(String(64), nullable=True, comment="面料种类")
+    year = Column(Integer, nullable=True, comment="年份")
+    gender = Column(String(16), nullable=True, comment="性别")
+    season = Column(String(32), nullable=True, comment="季节")
+    category = Column(String(64), nullable=True, comment="类目")
+    product_category = Column(String(64), nullable=True, comment="商品分类")
+    virtual_category = Column(String(64), nullable=True, comment="虚拟分类")
+    # 颜色 / 尺码
+    colors_active = Column(String(512), nullable=True, comment="在售颜色")
+    colors_discontinued = Column(String(512), nullable=True, comment="淘汰颜色")
+    color_remark = Column(Text, nullable=True, comment="颜色备注")
+    sizes = Column(String(256), nullable=True, comment="尺码")
+    size_specs = Column(Text, nullable=True, comment="号型")
+    size_remark = Column(Text, nullable=True, comment="尺码备注")
+    # 印花相关
+    printable_area = Column(String(512), nullable=True, comment="可印花范围")
+    # 面料
+    fabric_composition = Column(String(512), nullable=True, comment="面料成分")
+    fabric_composition_en = Column(String(512), nullable=True, comment="Fabric Ingredients")
+    hot_wind_composition = Column(String(512), nullable=True, comment="热风成分")
+    fabric_name = Column(String(128), nullable=True, comment="面料名称")
+    fabric_weight = Column(String(64), nullable=True, comment="面料克重")
+    blank_weight = Column(Float, nullable=True, comment="白坯重量(kg)")
+    # 商业信息
+    dev_date = Column(Date, nullable=True, comment="开发时间")
+    tag_price = Column(Float, nullable=True, comment="吊牌价")
+    premium_tag_price = Column(Float, nullable=True, comment="高价品牌吊牌价")
+    exec_standard = Column(String(128), nullable=True, comment="执行标准")
+    safety_category = Column(String(128), nullable=True, comment="安全技术类别")
+    product_type = Column(String(128), nullable=True, comment="产品分类")
+    # 备注 / 状态
+    description = Column(Text, nullable=True, comment="款式备注")
     is_active = Column(Boolean, default=True, comment="是否启用")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

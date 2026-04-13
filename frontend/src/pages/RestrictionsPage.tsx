@@ -100,14 +100,16 @@ export default function RestrictionsPage() {
   const filterOption = (input: string, option?: { label: string; value: number }) =>
     (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
 
-  const styleOptions = styles.map(s => ({ value: s.id, label: `${s.code} ${s.name}` }))
+  const styleOptions = styles.map(s => ({ value: s.id, label: s.product_code ? `${s.product_code} ${s.code}` : s.code }))
   const printOptions = prints.map(p => ({ value: p.id, label: `${p.code} ${p.name}` }))
   const positionOptions = positions.map(p => ({ value: p.id, label: `${p.code} ${p.name}` }))
 
   const columns: ColumnsType<Restriction> = [
     {
       title: '款式', width: 160,
-      render: (_: unknown, r: Restriction) => r.style ? `${r.style.code} ${r.style.name}` : r.style_id,
+      render: (_: unknown, r: Restriction) => r.style
+        ? (r.style.product_code ? `${r.style.product_code} ${r.style.code}` : r.style.code)
+        : r.style_id,
     },
     {
       title: '位置', width: 160,
@@ -187,7 +189,9 @@ export default function RestrictionsPage() {
           {editing ? (
             <>
               <Form.Item label="款式">
-                <Text>{editing.style ? `${editing.style.code} ${editing.style.name}` : editing.style_id}</Text>
+                <Text>{editing.style
+                ? (editing.style.product_code ? `${editing.style.product_code} ${editing.style.code}` : editing.style.code)
+                : editing.style_id}</Text>
               </Form.Item>
               <Form.Item label="位置">
                 <Text>{editing.position ? `${editing.position.code} ${editing.position.name}` : editing.position_id}</Text>

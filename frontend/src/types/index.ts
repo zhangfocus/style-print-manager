@@ -1,9 +1,35 @@
 export interface Style {
   id: number
-  code: string
-  name: string
+  code: string             // 白坯款式编码（唯一）
+  product_code?: string    // 商品款号
+  brand_attr?: string
+  attr?: string
+  fabric_type?: string
+  year?: number
+  gender?: string
+  season?: string
   category?: string
-  color?: string
+  product_category?: string
+  virtual_category?: string
+  colors_active?: string
+  colors_discontinued?: string
+  color_remark?: string
+  sizes?: string
+  size_specs?: string
+  size_remark?: string
+  printable_area?: string
+  fabric_composition?: string
+  fabric_composition_en?: string
+  hot_wind_composition?: string
+  fabric_name?: string
+  fabric_weight?: string
+  blank_weight?: number
+  dev_date?: string
+  tag_price?: number
+  premium_tag_price?: number
+  exec_standard?: string
+  safety_category?: string
+  product_type?: string
   description?: string
   is_active: boolean
   created_at?: string

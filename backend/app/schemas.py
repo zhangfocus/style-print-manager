@@ -1,14 +1,40 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
+from datetime import datetime, date
 
 
 # ───── Style ─────
 class StyleBase(BaseModel):
-    code: str = Field(..., description="款式编号")
-    name: str = Field(..., description="款式名称")
+    code: str = Field(..., description="白坯款式编码（唯一）")
+    product_code: Optional[str] = Field(None, description="商品款号")
+    brand_attr: Optional[str] = None
+    attr: Optional[str] = None
+    fabric_type: Optional[str] = None
+    year: Optional[int] = None
+    gender: Optional[str] = None
+    season: Optional[str] = None
     category: Optional[str] = None
-    color: Optional[str] = None
+    product_category: Optional[str] = None
+    virtual_category: Optional[str] = None
+    colors_active: Optional[str] = None
+    colors_discontinued: Optional[str] = None
+    color_remark: Optional[str] = None
+    sizes: Optional[str] = None
+    size_specs: Optional[str] = None
+    size_remark: Optional[str] = None
+    printable_area: Optional[str] = None
+    fabric_composition: Optional[str] = None
+    fabric_composition_en: Optional[str] = None
+    hot_wind_composition: Optional[str] = None
+    fabric_name: Optional[str] = None
+    fabric_weight: Optional[str] = None
+    blank_weight: Optional[float] = None
+    dev_date: Optional[date] = None
+    tag_price: Optional[float] = None
+    premium_tag_price: Optional[float] = None
+    exec_standard: Optional[str] = None
+    safety_category: Optional[str] = None
+    product_type: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
 
@@ -18,9 +44,35 @@ class StyleCreate(StyleBase):
 
 
 class StyleUpdate(BaseModel):
-    name: Optional[str] = None
+    product_code: Optional[str] = None
+    brand_attr: Optional[str] = None
+    attr: Optional[str] = None
+    fabric_type: Optional[str] = None
+    year: Optional[int] = None
+    gender: Optional[str] = None
+    season: Optional[str] = None
     category: Optional[str] = None
-    color: Optional[str] = None
+    product_category: Optional[str] = None
+    virtual_category: Optional[str] = None
+    colors_active: Optional[str] = None
+    colors_discontinued: Optional[str] = None
+    color_remark: Optional[str] = None
+    sizes: Optional[str] = None
+    size_specs: Optional[str] = None
+    size_remark: Optional[str] = None
+    printable_area: Optional[str] = None
+    fabric_composition: Optional[str] = None
+    fabric_composition_en: Optional[str] = None
+    hot_wind_composition: Optional[str] = None
+    fabric_name: Optional[str] = None
+    fabric_weight: Optional[str] = None
+    blank_weight: Optional[float] = None
+    dev_date: Optional[date] = None
+    tag_price: Optional[float] = None
+    premium_tag_price: Optional[float] = None
+    exec_standard: Optional[str] = None
+    safety_category: Optional[str] = None
+    product_type: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
 

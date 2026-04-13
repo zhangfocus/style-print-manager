@@ -8,7 +8,11 @@ from . import models, schemas
 def get_styles(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
     q = db.query(models.Style)
     if keyword:
-        q = q.filter(or_(models.Style.name.contains(keyword), models.Style.code.contains(keyword)))
+        q = q.filter(or_(
+            models.Style.code.contains(keyword),
+            models.Style.product_code.contains(keyword),
+            models.Style.product_category.contains(keyword),
+        ))
     return q.offset(skip).limit(limit).all()
 
 
