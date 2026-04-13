@@ -33,9 +33,9 @@ class Style(Base):
     # 印花相关
     printable_area = Column(String(512), nullable=True, comment="可印花范围")
     # 面料
-    fabric_composition = Column(String(512), nullable=True, comment="面料成分")
-    fabric_composition_en = Column(String(512), nullable=True, comment="Fabric Ingredients")
-    hot_wind_composition = Column(String(512), nullable=True, comment="热风成分")
+    fabric_composition = Column(Text, nullable=True, comment="面料成分")
+    fabric_composition_en = Column(Text, nullable=True, comment="Fabric Ingredients")
+    hot_wind_composition = Column(Text, nullable=True, comment="热风成分")
     fabric_name = Column(String(128), nullable=True, comment="面料名称")
     fabric_weight = Column(String(64), nullable=True, comment="面料克重")
     blank_weight = Column(Float, nullable=True, comment="白坯重量(kg)")
