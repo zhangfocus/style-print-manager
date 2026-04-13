@@ -60,10 +60,25 @@ class Print(Base):
     __tablename__ = "prints"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(64), unique=True, nullable=False, index=True, comment="印花编号")
-    name = Column(String(128), nullable=False, comment="印花名称")
-    pattern_type = Column(String(64), nullable=True, comment="图案类型")
-    color_scheme = Column(String(64), nullable=True, comment="色系")
+    # 商品编码 — 唯一标识
+    code = Column(String(64), unique=True, nullable=False, index=True, comment="商品编码")
+    # 图案基础属性
+    name = Column(String(128), nullable=False, comment="图案名称")
+    pattern_size = Column(String(32), nullable=True, comment="图案大小")
+    pattern_spec = Column(String(16), nullable=True, comment="图案规格")
+    craft_attr = Column(String(64), nullable=True, comment="工艺属性")
+    # 品牌关联
+    zwx_style_code = Column(String(64), nullable=True, comment="真维斯款号")
+    zwx_replace_code = Column(String(64), nullable=True, comment="真维斯替换编码")
+    zwx_replace_style = Column(String(64), nullable=True, comment="真维斯替换款号")
+    jwco_style_code = Column(String(64), nullable=True, comment="JWCO款号")
+    jwco_replace_code = Column(String(64), nullable=True, comment="JWCO替换编码")
+    jwco_replace_style = Column(String(64), nullable=True, comment="JWCO替换款号")
+    city_style_code = Column(String(64), nullable=True, comment="CITY款号")
+    city_replace_code = Column(String(64), nullable=True, comment="CITY替换编码")
+    city_replace_style = Column(String(64), nullable=True, comment="CITY替换款号")
+    tangshi_style_code = Column(String(64), nullable=True, comment="唐狮款号")
+    # 其他
     description = Column(Text, nullable=True, comment="备注")
     is_active = Column(Boolean, default=True, comment="是否启用")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

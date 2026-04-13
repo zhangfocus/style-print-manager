@@ -38,10 +38,21 @@ export interface Style {
 
 export interface Print {
   id: number
-  code: string
-  name: string
-  pattern_type?: string
-  color_scheme?: string
+  code: string             // 商品编码（唯一）
+  name: string             // 图案名称
+  pattern_size?: string    // 图案大小
+  pattern_spec?: string    // 图案规格
+  craft_attr?: string      // 工艺属性
+  zwx_style_code?: string
+  zwx_replace_code?: string
+  zwx_replace_style?: string
+  jwco_style_code?: string
+  jwco_replace_code?: string
+  jwco_replace_style?: string
+  city_style_code?: string
+  city_replace_code?: string
+  city_replace_style?: string
+  tangshi_style_code?: string
   description?: string
   is_active: boolean
   created_at?: string

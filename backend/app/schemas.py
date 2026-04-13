@@ -88,10 +88,21 @@ class StyleOut(StyleBase):
 
 # ───── Print ─────
 class PrintBase(BaseModel):
-    code: str = Field(..., description="印花编号")
-    name: str = Field(..., description="印花名称")
-    pattern_type: Optional[str] = None
-    color_scheme: Optional[str] = None
+    code: str = Field(..., description="商品编码（唯一）")
+    name: str = Field(..., description="图案名称")
+    pattern_size: Optional[str] = None
+    pattern_spec: Optional[str] = None
+    craft_attr: Optional[str] = None
+    zwx_style_code: Optional[str] = None
+    zwx_replace_code: Optional[str] = None
+    zwx_replace_style: Optional[str] = None
+    jwco_style_code: Optional[str] = None
+    jwco_replace_code: Optional[str] = None
+    jwco_replace_style: Optional[str] = None
+    city_style_code: Optional[str] = None
+    city_replace_code: Optional[str] = None
+    city_replace_style: Optional[str] = None
+    tangshi_style_code: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
 
@@ -102,8 +113,19 @@ class PrintCreate(PrintBase):
 
 class PrintUpdate(BaseModel):
     name: Optional[str] = None
-    pattern_type: Optional[str] = None
-    color_scheme: Optional[str] = None
+    pattern_size: Optional[str] = None
+    pattern_spec: Optional[str] = None
+    craft_attr: Optional[str] = None
+    zwx_style_code: Optional[str] = None
+    zwx_replace_code: Optional[str] = None
+    zwx_replace_style: Optional[str] = None
+    jwco_style_code: Optional[str] = None
+    jwco_replace_code: Optional[str] = None
+    jwco_replace_style: Optional[str] = None
+    city_style_code: Optional[str] = None
+    city_replace_code: Optional[str] = None
+    city_replace_style: Optional[str] = None
+    tangshi_style_code: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Table, Button, Modal, Form, Input, Switch, Popconfirm,
-  Space, Tag, message, Card,
+  Space, Tag, message, Card, Divider,
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -19,13 +19,9 @@ export default function PrintsPage() {
 
   const load = async (kw = keyword) => {
     setLoading(true)
-    try {
-      setData(await listPrints(kw))
-    } catch (e: unknown) {
-      message.error((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
+    try { setData(await listPrints(kw)) }
+    catch (e: unknown) { message.error((e as Error).message) }
+    finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [])
@@ -44,13 +40,8 @@ export default function PrintsPage() {
   }
 
   const handleDelete = async (id: number) => {
-    try {
-      await deletePrint(id)
-      message.success('删除成功')
-      load()
-    } catch (e: unknown) {
-      message.error((e as Error).message)
-    }
+    try { await deletePrint(id); message.success('删除成功'); load() }
+    catch (e: unknown) { message.error((e as Error).message) }
   }
 
   const handleSubmit = async (values: Partial<Print>) => {
@@ -65,18 +56,20 @@ export default function PrintsPage() {
       }
       setModalOpen(false)
       load()
-    } catch (e: unknown) {
-      message.error((e as Error).message)
-    } finally {
-      setSubmitting(false)
-    }
+    } catch (e: unknown) { message.error((e as Error).message) }
+    finally { setSubmitting(false) }
   }
 
   const columns: ColumnsType<Print> = [
-    { title: '印花编号', dataIndex: 'code', width: 120 },
-    { title: '印花名称', dataIndex: 'name', width: 150 },
-    { title: '图案类型', dataIndex: 'pattern_type', width: 110 },
-    { title: '色系', dataIndex: 'color_scheme', width: 100 },
+    { title: '商品编码', dataIndex: 'code', width: 120, fixed: 'left' },
+    { title: '图案名称', dataIndex: 'name', width: 140, ellipsis: true },
+    { title: '图案大小', dataIndex: 'pattern_size', width: 90 },
+    { title: '图案规格', dataIndex: 'pattern_spec', width: 80 },
+    { title: '工艺属性', dataIndex: 'craft_attr', width: 150, ellipsis: true },
+    { title: '真维斯款号', dataIndex: 'zwx_style_code', width: 110 },
+    { title: 'JWCO款号', dataIndex: 'jwco_style_code', width: 110 },
+    { title: 'CITY款号', dataIndex: 'city_style_code', width: 110 },
+    { title: '唐狮款号', dataIndex: 'tangshi_style_code', width: 100 },
     { title: '备注', dataIndex: 'description', ellipsis: true },
     {
       title: '状态', dataIndex: 'is_active', width: 80,
@@ -101,9 +94,9 @@ export default function PrintsPage() {
       extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建印花</Button>}
     >
       <Input.Search
-        placeholder="搜索编号或名称"
+        placeholder="搜索商品编码 / 图案名称 / 工艺属性"
         allowClear
-        style={{ width: 260, marginBottom: 16 }}
+        style={{ width: 320, marginBottom: 16 }}
         onSearch={kw => { setKeyword(kw); load(kw) }}
         onChange={e => { if (!e.target.value) { setKeyword(''); load('') } }}
       />
@@ -113,9 +106,10 @@ export default function PrintsPage() {
         dataSource={data}
         loading={loading}
         pagination={{ pageSize: 20, showTotal: t => `共 ${t} 条` }}
-        scroll={{ x: 800 }}
+        scroll={{ x: 1200 }}
         size="small"
       />
+
       <Modal
         title={editing ? '编辑印花' : '新建印花'}
         open={modalOpen}
@@ -123,23 +117,41 @@ export default function PrintsPage() {
         onOk={() => form.submit()}
         confirmLoading={submitting}
         destroyOnClose
+        width={680}
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 12 }}>
-          <Form.Item name="code" label="印花编号" rules={[{ required: true, message: '请输入印花编号' }]}>
-            <Input disabled={!!editing} placeholder="如 PT001" />
-          </Form.Item>
-          <Form.Item name="name" label="印花名称" rules={[{ required: true, message: '请输入印花名称' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="pattern_type" label="图案类型">
-            <Input placeholder="如 花卉" />
-          </Form.Item>
-          <Form.Item name="color_scheme" label="色系">
-            <Input placeholder="如 粉色系" />
-          </Form.Item>
-          <Form.Item name="description" label="备注">
-            <Input.TextArea rows={2} />
-          </Form.Item>
+        <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 8 }}>
+          {/* 基础信息 */}
+          <Divider orientationMargin={0} plain style={{ fontSize: 13 }}>基础信息</Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+            <Form.Item name="code" label="商品编码" rules={[{ required: true, message: '请输入商品编码' }]}>
+              <Input disabled={!!editing} />
+            </Form.Item>
+            <Form.Item name="name" label="图案名称" rules={[{ required: true, message: '请输入图案名称' }]}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="pattern_size" label="图案大小"><Input placeholder="小图 / 大图 / 超大图 / 中图" /></Form.Item>
+            <Form.Item name="pattern_spec" label="图案规格"><Input placeholder="X / D / C" /></Form.Item>
+            <Form.Item name="craft_attr" label="工艺属性" style={{ gridColumn: '1 / -1' }}><Input /></Form.Item>
+          </div>
+
+          {/* 品牌关联 */}
+          <Divider orientationMargin={0} plain style={{ fontSize: 13 }}>品牌关联</Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+            <Form.Item name="zwx_style_code" label="真维斯款号"><Input /></Form.Item>
+            <Form.Item name="zwx_replace_code" label="真维斯替换编码"><Input /></Form.Item>
+            <Form.Item name="zwx_replace_style" label="真维斯替换款号"><Input /></Form.Item>
+            <Form.Item name="jwco_style_code" label="JWCO款号"><Input /></Form.Item>
+            <Form.Item name="jwco_replace_code" label="JWCO替换编码"><Input /></Form.Item>
+            <Form.Item name="jwco_replace_style" label="JWCO替换款号"><Input /></Form.Item>
+            <Form.Item name="city_style_code" label="CITY款号"><Input /></Form.Item>
+            <Form.Item name="city_replace_code" label="CITY替换编码"><Input /></Form.Item>
+            <Form.Item name="city_replace_style" label="CITY替换款号"><Input /></Form.Item>
+            <Form.Item name="tangshi_style_code" label="唐狮款号"><Input /></Form.Item>
+          </div>
+
+          {/* 备注 / 状态 */}
+          <Divider orientationMargin={0} plain style={{ fontSize: 13 }}>备注 / 状态</Divider>
+          <Form.Item name="description" label="备注"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="is_active" label="状态" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="停用" />
           </Form.Item>

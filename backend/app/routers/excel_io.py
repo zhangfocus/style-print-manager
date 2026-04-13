@@ -25,7 +25,13 @@ STYLE_HEADERS = [
     "开发时间", "吊牌价", "高价品牌吊牌价",
     "执行标准", "安全技术类别", "产品分类",
 ]
-PRINT_HEADERS = ["印花编号*", "印花名称*", "图案类型", "色系", "备注"]
+PRINT_HEADERS = [
+    "图案名称*", "图案大小", "图案规格", "工艺属性", "商品编码*",
+    "真维斯款号", "真维斯替换编码", "真维斯替换款号",
+    "JWCO款号", "JWCO替换编码", "JWCO替换款号",
+    "CITY款号", "CITY替换编码", "CITY替换款号",
+    "唐狮款号", "备注",
+]
 POSITION_HEADERS = ["位置编号*", "位置名称*", "区域", "备注"]
 RESTRICTION_HEADERS = ["白坯款式编码*", "位置编号*", "印花编号*", "是否启用(1/0)", "备注"]
 
@@ -154,26 +160,61 @@ def _import_styles(ws, db: Session):
 
 
 def _import_prints(ws, db: Session):
+    """支持原始印花.xlsx格式（按列名匹配）和模板格式"""
+    headers = [cell.value for cell in ws[1]]
+
+    def col(row_vals, *names):
+        for name in names:
+            for h in [name, name + "*", name.rstrip("*")]:
+                try:
+                    return row_vals[headers.index(h)]
+                except ValueError:
+                    continue
+        return None
+
     count, errors = 0, []
     for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
-        if not row[0] and not row[1]:
+        code_val = col(row, "商品编码")
+        name_val = col(row, "图案名称")
+        if not code_val and not name_val:
             continue
-        code, name = _str(row[0]), _str(row[1])
-        if not code or not name:
-            errors.append(f"第{row_idx}行：编号和名称不能为空")
+        code = _str(code_val)
+        name = _str(name_val)
+        if not code:
+            errors.append(f"第{row_idx}行：商品编码不能为空")
             continue
-        payload = schemas.PrintCreate(
-            code=code, name=name,
-            pattern_type=_str(row[2]),
-            color_scheme=_str(row[3]),
-            description=_str(row[4]),
-        )
-        existing = crud.get_print_by_code(db, code)
-        if existing:
-            crud.update_print(db, existing.id, schemas.PrintUpdate(**{k: v for k, v in payload.model_dump().items() if k != "code"}))
-        else:
-            crud.create_print(db, payload)
-        count += 1
+        if not name:
+            errors.append(f"第{row_idx}行：图案名称不能为空")
+            continue
+        try:
+            payload = schemas.PrintCreate(
+                code=code,
+                name=name,
+                pattern_size=_str(col(row, "图案大小")),
+                pattern_spec=_str(col(row, "图案规格")),
+                craft_attr=_str(col(row, "工艺属性")),
+                zwx_style_code=_str(col(row, "真维斯款号")),
+                zwx_replace_code=_str(col(row, "真维斯替换编码")),
+                zwx_replace_style=_str(col(row, "真维斯替换款号")),
+                jwco_style_code=_str(col(row, "JWCO款号")),
+                jwco_replace_code=_str(col(row, "JWCO替换编码")),
+                jwco_replace_style=_str(col(row, "JWCO替换款号")),
+                city_style_code=_str(col(row, "CITY款号")),
+                city_replace_code=_str(col(row, "CITY替换编码")),
+                city_replace_style=_str(col(row, "CITY替换款号")),
+                tangshi_style_code=_str(col(row, "唐狮款号")),
+                description=_str(col(row, "备注")),
+            )
+            existing = crud.get_print_by_code(db, code)
+            if existing:
+                crud.update_print(db, existing.id, schemas.PrintUpdate(**{k: v for k, v in payload.model_dump().items() if k != "code"}))
+            else:
+                crud.create_print(db, payload)
+            count += 1
+        except Exception as e:
+            errors.append(f"第{row_idx}行处理失败: {e}")
+            if len(errors) >= 20:
+                break
     return count, errors
 
 
@@ -335,8 +376,10 @@ def template_prints():
     ws.title = "印花"
     ws.append(PRINT_HEADERS)
     _apply_header_style(ws)
-    ws.append(["PT001", "玫瑰花印花", "花卉", "粉色系", ""])
-    ws.append(["PT002", "几何图案", "几何", "蓝色系", ""])
+    ws.append(["玫瑰花印花", "小图", "X", "高弹烫画", "PT001",
+               None, None, None, None, None, None, None, None, None, None, ""])
+    ws.append(["几何图案", "大图", "D", "白墨烫画", "PT002",
+               None, None, None, None, None, None, None, None, None, None, ""])
     return _stream_wb(wb, "template_prints.xlsx")
 
 
@@ -393,7 +436,13 @@ def export_excel(db: Session = Depends(get_db)):
     ws.append(PRINT_HEADERS)
     _apply_header_style(ws)
     for p in crud.get_prints(db, limit=99999):
-        ws.append([p.code, p.name, p.pattern_type, p.color_scheme, p.description])
+        ws.append([
+            p.name, p.pattern_size, p.pattern_spec, p.craft_attr, p.code,
+            p.zwx_style_code, p.zwx_replace_code, p.zwx_replace_style,
+            p.jwco_style_code, p.jwco_replace_code, p.jwco_replace_style,
+            p.city_style_code, p.city_replace_code, p.city_replace_style,
+            p.tangshi_style_code, p.description,
+        ])
 
     ws = wb.create_sheet("位置")
     ws.append(POSITION_HEADERS)

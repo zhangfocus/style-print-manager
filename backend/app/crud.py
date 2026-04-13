@@ -55,7 +55,11 @@ def delete_style(db: Session, style_id: int):
 def get_prints(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
     q = db.query(models.Print)
     if keyword:
-        q = q.filter(or_(models.Print.name.contains(keyword), models.Print.code.contains(keyword)))
+        q = q.filter(or_(
+            models.Print.code.contains(keyword),
+            models.Print.name.contains(keyword),
+            models.Print.craft_attr.contains(keyword),
+        ))
     return q.offset(skip).limit(limit).all()
 
 
