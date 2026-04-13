@@ -16,13 +16,14 @@ interface PanelConfig {
   key: EntityKey
   label: string
   hint: string
+  accept: string
 }
 
 const PANELS: PanelConfig[] = [
-  { key: 'styles',       label: '款式',  hint: '支持原始款式模版格式（31列），按白坯款式编码去重更新' },
-  { key: 'prints',       label: '印花',  hint: '列顺序：印花编号*、印花名称*、图案类型、色系、备注' },
-  { key: 'positions',    label: '位置',  hint: '列顺序：位置编号*、位置名称*、区域、备注' },
-  { key: 'restrictions', label: '限定',  hint: '列顺序：白坯款式编码*、位置编号*、印花编号*、是否启用(1/0)、备注' },
+  { key: 'styles',       label: '款式',  accept: '.xlsx,.xls', hint: '支持原始款式模版格式（31列），按白坯款式编码去重更新' },
+  { key: 'prints',       label: '印花',  accept: '.xlsx,.xls', hint: '支持原始印花.xlsx格式，按商品编码去重更新' },
+  { key: 'positions',    label: '位置',  accept: '.xlsx,.xls,.json,.txt', hint: '支持 Excel 或贴图位置字典 JSON/txt 格式' },
+  { key: 'restrictions', label: '限定',  accept: '.xlsx,.xls', hint: '列顺序：白坯款式编码*、位置编号*、印花编号*、是否启用(1/0)、备注' },
 ]
 
 interface PanelState {
@@ -80,7 +81,7 @@ function ImportPanel({ config }: { config: PanelConfig }) {
       }
     >
       <Dragger
-        accept=".xlsx,.xls"
+        accept={config.accept}
         maxCount={1}
         fileList={state.fileList}
         beforeUpload={() => false}

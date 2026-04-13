@@ -322,12 +322,51 @@ async def import_prints(file: UploadFile = File(...), db: Session = Depends(get_
     return _result("印花", count, errors)
 
 
-@router.post("/import/positions", summary="导入位置", response_model=schemas.ImportResult)
+@router.post("/import/positions", summary="导入位置（Excel 或 JSON）", response_model=schemas.ImportResult)
 async def import_positions(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "请上传 .xlsx 或 .xls 文件")
-    wb = _parse_wb(await file.read(), file.filename)
-    ws = wb["位置"] if "位置" in wb.sheetnames else _first_sheet(wb, file.filename)
+    fname = file.filename or ""
+    content = await file.read()
+
+    # JSON / txt 格式：贴图位置字典
+    if fname.endswith((".json", ".txt")):
+        import json as _json
+        try:
+            data = _json.loads(content.decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(400, f"JSON 解析失败: {e}")
+
+        CATEGORY_MAP = {
+            "big_position": "大图位置",
+            "small_position": "小图位置",
+            "combination_position": "组合位置",
+        }
+        count, errors = 0, []
+        for group_key, items in data.items():
+            area = CATEGORY_MAP.get(group_key, group_key)
+            if not isinstance(items, dict):
+                continue
+            for pos_name, pos_code in items.items():
+                code = _str(str(pos_code))
+                name = _str(str(pos_name))
+                if not code or not name:
+                    continue
+                try:
+                    payload = schemas.PositionCreate(code=code, name=name, area=area)
+                    existing = crud.get_position_by_code(db, code)
+                    if existing:
+                        crud.update_position(db, existing.id, schemas.PositionUpdate(name=name, area=area))
+                    else:
+                        crud.create_position(db, payload)
+                    count += 1
+                except Exception as e:
+                    errors.append(f"{code} 处理失败: {e}")
+        return _result("位置", count, errors)
+
+    # Excel 格式
+    if not fname.endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "请上传 .xlsx / .xls 或 JSON/txt 文件")
+    wb = _parse_wb(content, fname)
+    ws = wb["位置"] if "位置" in wb.sheetnames else _first_sheet(wb, fname)
     count, errors = _import_positions(ws, db)
     return _result("位置", count, errors)
 
