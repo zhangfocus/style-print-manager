@@ -6,7 +6,13 @@ export type EntityKey = 'styles' | 'prints' | 'positions' | 'restrictions'
 export const downloadTemplate = (entity: EntityKey) =>
   window.open(`/api/excel/template/${entity}`, '_blank')
 
-export const exportExcel = () => window.open('/api/excel/export', '_blank')
+/** entities 为空时全量导出，否则传逗号分隔的实体名 */
+export const exportExcel = (entities?: string) => {
+  const url = entities
+    ? `/api/excel/export?entities=${encodeURIComponent(entities)}`
+    : '/api/excel/export'
+  window.open(url, '_blank')
+}
 
 export const importEntity = (entity: EntityKey, file: File): Promise<ImportResult> => {
   const form = new FormData()

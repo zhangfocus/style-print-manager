@@ -1,6 +1,8 @@
 import io
+import json
 import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from openpyxl import load_workbook, Workbook
@@ -33,7 +35,7 @@ PRINT_HEADERS = [
     "唐狮款号", "备注",
 ]
 POSITION_HEADERS = ["位置编号*", "位置名称*", "区域", "备注"]
-RESTRICTION_HEADERS = ["白坯款式编码*", "位置编号*", "印花编号*", "是否启用(1/0)", "备注"]
+RESTRICTION_HEADERS = ["白坯款式编码*", "位置名称*", "允许印花编码(逗号分隔，留空=不限)", "是否启用(1/0)", "备注"]
 
 
 # ── 工具函数 ──────────────────────────────────────────
@@ -241,45 +243,108 @@ def _import_positions(ws, db: Session):
     return count, errors
 
 
-def _import_restrictions(ws, db: Session):
-    count, errors = 0, []
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
-        if not row[0] and not row[1] and not row[2]:
-            continue
-        s_code = _str(row[0]) or ""
-        p_code = _str(row[1]) or ""
-        pt_code = _str(row[2]) or ""
-        if not s_code or not p_code or not pt_code:
-            errors.append(f"第{row_idx}行：款式、位置、印花编号不能为空")
-            continue
-        style = crud.get_style_by_code(db, s_code)
-        position = crud.get_position_by_code(db, p_code)
-        print_item = crud.get_print_by_code(db, pt_code)
-        if not style:
-            errors.append(f"第{row_idx}行：白坯款式编码 {s_code} 不存在")
-            continue
-        if not position:
-            errors.append(f"第{row_idx}行：位置编号 {p_code} 不存在")
-            continue
-        if not print_item:
-            errors.append(f"第{row_idx}行：印花编号 {pt_code} 不存在")
-            continue
-        is_active = bool(int(row[3])) if row[3] is not None and str(row[3]).strip() != "" else True
-        remark = _str(row[4])
-        existing = db.query(models.Restriction).filter(
-            models.Restriction.style_id == style.id,
-            models.Restriction.position_id == position.id,
-            models.Restriction.print_id == print_item.id,
-        ).first()
-        if existing:
-            crud.update_restriction(db, existing.id, schemas.RestrictionUpdate(is_active=is_active, remark=remark))
+import re as _re
+
+# 导入时跳过的特殊印花（不算真实印花，无需限定）
+_SPECIAL_PRINTS = {"纯色", "福袋", "自搭"}
+
+
+def _split_multi(s: str):
+    """按中英文逗号/顿号/换行拆分，去空白"""
+    return [x.strip() for x in _re.split(r'[,，、\n\r]+', s) if x.strip()]
+
+
+def _parse_print_list(raw: str):
+    """
+    解析印花列表字符串：
+    - 返回 None  → 不限制任何印花
+    - 返回 list  → 仅允许列表中的印花（已去重排序，已剔除特殊印花）
+    """
+    if not raw:
+        return None
+    codes = [c for c in _split_multi(raw) if c not in _SPECIAL_PRINTS]
+    return sorted(set(codes)) if codes else None
+
+
+def _upsert_rule(db: Session, style_code: str, position_name: str, new_prints):
+    """
+    向 style_position_rules 写入或合并一条规则（通过 style_code / position_name 查 ID）。
+    - new_prints=None  → 该位置不限印花（若已有列表，升级为 NULL）
+    - new_prints=list  → 与已有允许列表取并集
+    找不到款式或位置时抛 ValueError，由调用方记录为错误行。
+    """
+    style = crud.get_style_by_code(db, style_code)
+    if not style:
+        raise ValueError(f"款式 '{style_code}' 不在款式表中")
+    position = crud.get_position_by_name(db, position_name)
+    if not position:
+        raise ValueError(f"位置 '{position_name}' 不在位置表中")
+
+    existing = crud.get_style_position_rule_by_key(db, style.id, position.id)
+    if existing:
+        if new_prints is None:
+            if existing.allowed_prints is not None:
+                existing.allowed_prints = None
+                db.commit()
         else:
-            crud.create_restriction(db, schemas.RestrictionCreate(
-                style_id=style.id, position_id=position.id, print_id=print_item.id,
-                is_active=is_active, remark=remark,
-            ))
-        count += 1
-    return count, errors
+            if existing.allowed_prints is not None:
+                old_set = set(existing.allowed_prints.split(","))
+                merged = sorted(old_set | set(new_prints))
+                existing.allowed_prints = ",".join(merged)
+                db.commit()
+    else:
+        ap = ",".join(new_prints) if new_prints else None
+        db.add(models.StylePositionRule(
+            style_id=style.id,
+            position_id=position.id,
+            allowed_prints=ap,
+        ))
+        db.commit()
+
+
+def _upsert_ban(db: Session, style_code: str):
+    style = crud.get_style_by_code(db, style_code)
+    if not style:
+        raise ValueError(f"款式 '{style_code}' 不在款式表中")
+    if not crud.get_style_ban_by_style_id(db, style.id):
+        db.add(models.StyleBan(style_id=style.id))
+        db.commit()
+
+
+def _import_restrictions(ws, db: Session):
+    """
+    标准限定格式（3列）：
+      A=白坯款式编码  B=位置名称（空=全禁该款式）  C=印花编码（逗号分隔，空=不限）
+    同一 (款式, 位置) 多次导入时印花列表取并集。
+    """
+    rows = list(ws.iter_rows(values_only=True))
+    rule_count, ban_count, errors = 0, 0, []
+
+    for row_idx, row in enumerate(rows[1:], 2):
+        style_code = _str(row[0]) if len(row) > 0 else None
+        pos_name   = _str(row[1]) if len(row) > 1 else None
+        prints_raw = _str(row[2]) if len(row) > 2 else None
+
+        if not style_code:
+            continue
+
+        if pos_name:
+            print_list = _parse_print_list(prints_raw)
+            try:
+                _upsert_rule(db, style_code, pos_name, print_list)
+                rule_count += 1
+            except Exception as e:
+                errors.append(f"第{row_idx}行 ({style_code}, {pos_name}): {e}")
+                if len(errors) >= 30:
+                    return rule_count + ban_count, errors
+        else:
+            try:
+                _upsert_ban(db, style_code)
+                ban_count += 1
+            except Exception as e:
+                errors.append(f"第{row_idx}行 全禁 ({style_code}): {e}")
+
+    return rule_count + ban_count, errors
 
 
 def _result(label: str, count: int, errors: list) -> schemas.ImportResult:
@@ -322,52 +387,42 @@ async def import_prints(file: UploadFile = File(...), db: Session = Depends(get_
     return _result("印花", count, errors)
 
 
-@router.post("/import/positions", summary="导入位置（Excel 或 JSON）", response_model=schemas.ImportResult)
+@router.post("/import/positions", summary="导入位置（JSON/txt）", response_model=schemas.ImportResult)
 async def import_positions(file: UploadFile = File(...), db: Session = Depends(get_db)):
     fname = file.filename or ""
+    if not fname.endswith((".json", ".txt")):
+        raise HTTPException(400, "请上传 JSON/txt 格式的贴图位置字典文件")
     content = await file.read()
+    try:
+        data = json.loads(content.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(400, f"JSON 解析失败: {e}")
 
-    # JSON / txt 格式：贴图位置字典
-    if fname.endswith((".json", ".txt")):
-        import json as _json
-        try:
-            data = _json.loads(content.decode("utf-8"))
-        except Exception as e:
-            raise HTTPException(400, f"JSON 解析失败: {e}")
-
-        CATEGORY_MAP = {
-            "big_position": "大图位置",
-            "small_position": "小图位置",
-            "combination_position": "组合位置",
-        }
-        count, errors = 0, []
-        for group_key, items in data.items():
-            area = CATEGORY_MAP.get(group_key, group_key)
-            if not isinstance(items, dict):
+    CATEGORY_MAP = {
+        "big_position": "大图位置",
+        "small_position": "小图位置",
+        "combination_position": "组合位置",
+    }
+    count, errors = 0, []
+    for group_key, items in data.items():
+        area = CATEGORY_MAP.get(group_key, group_key)
+        if not isinstance(items, dict):
+            continue
+        for pos_name, pos_code in items.items():
+            code = _str(str(pos_code))
+            name = _str(str(pos_name))
+            if not code or not name:
                 continue
-            for pos_name, pos_code in items.items():
-                code = _str(str(pos_code))
-                name = _str(str(pos_name))
-                if not code or not name:
-                    continue
-                try:
-                    payload = schemas.PositionCreate(code=code, name=name, area=area)
-                    existing = crud.get_position_by_code(db, code)
-                    if existing:
-                        crud.update_position(db, existing.id, schemas.PositionUpdate(name=name, area=area))
-                    else:
-                        crud.create_position(db, payload)
-                    count += 1
-                except Exception as e:
-                    errors.append(f"{code} 处理失败: {e}")
-        return _result("位置", count, errors)
-
-    # Excel 格式
-    if not fname.endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "请上传 .xlsx / .xls 或 JSON/txt 文件")
-    wb = _parse_wb(content, fname)
-    ws = wb["位置"] if "位置" in wb.sheetnames else _first_sheet(wb, fname)
-    count, errors = _import_positions(ws, db)
+            try:
+                payload = schemas.PositionCreate(code=code, name=name, area=area)
+                existing = crud.get_position_by_code(db, code)
+                if existing:
+                    crud.update_position(db, existing.id, schemas.PositionUpdate(name=name, area=area))
+                else:
+                    crud.create_position(db, payload)
+                count += 1
+            except Exception as e:
+                errors.append(f"{code} 处理失败: {e}")
     return _result("位置", count, errors)
 
 
@@ -376,7 +431,7 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(400, "请上传 .xlsx 或 .xls 文件")
     wb = _parse_wb(await file.read(), file.filename)
-    ws = wb["限定"] if "限定" in wb.sheetnames else _first_sheet(wb, file.filename)
+    ws = _first_sheet(wb, file.filename)
     count, errors = _import_restrictions(ws, db)
     return _result("限定", count, errors)
 
@@ -384,84 +439,18 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
 # ── 分模块模版下载 ─────────────────────────────────────
 
 @router.get("/template/styles", summary="下载款式导入模板")
-def template_styles():
+def template_styles(db: Session = Depends(get_db)):
     wb = Workbook()
     ws = wb.active
     ws.title = "款式"
     ws.append(STYLE_HEADERS)
     _apply_header_style(ws)
-    ws.append([
-        "基本盘", "外采", "针织", 2024, "男", "春秋",
-        "上装", "T恤", "T恤类",
-        "FX24M003", "通BBH桑蚕丝POLO长T",
-        "",
-        "黑/白/海蓝/杏", "", "",
-        "M/L/XL/2XL/3XL", "M=170/88A,L=175/92A", "",
-        "可印花",
-        "67.3%聚酯纤维+29.9%棉+2.8%桑蚕丝",
-        "67.3% polyester+29.9% cotton+2.8% mulberry silk",
-        "67.3%聚酯纤维+29.9%棉+2.8%桑蚕丝",
-        "", "", 0.305,
-        45498, 199, 599,
-        "GB/T 22849-2024", "GB18401-2010 B类", "直接接触皮肤的纺织产品",
-    ])
-    return _stream_wb(wb, "template_styles.xlsx")
-
-
-@router.get("/template/prints", summary="下载印花导入模板")
-def template_prints():
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "印花"
-    ws.append(PRINT_HEADERS)
-    _apply_header_style(ws)
-    ws.append(["玫瑰花印花", "小图", "X", "高弹烫画", "PT001",
-               None, None, None, None, None, None, None, None, None, None, ""])
-    ws.append(["几何图案", "大图", "D", "白墨烫画", "PT002",
-               None, None, None, None, None, None, None, None, None, None, ""])
-    return _stream_wb(wb, "template_prints.xlsx")
-
-
-@router.get("/template/positions", summary="下载位置导入模板")
-def template_positions():
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "位置"
-    ws.append(POSITION_HEADERS)
-    _apply_header_style(ws)
-    ws.append(["PS001", "胸前左", "正面", ""])
-    ws.append(["PS002", "后背中", "背面", ""])
-    return _stream_wb(wb, "template_positions.xlsx")
-
-
-@router.get("/template/restrictions", summary="下载限定导入模板")
-def template_restrictions():
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "限定"
-    ws.append(RESTRICTION_HEADERS)
-    _apply_header_style(ws)
-    ws.append(["通BBH桑蚕丝POLO长T", "PS001", "PT001", 1, "推荐搭配"])
-    ws.append(["通BBH桑蚕丝POLO长T", "PS002", "PT001", 1, ""])
-    return _stream_wb(wb, "template_restrictions.xlsx")
-
-
-# ── 导出全量数据 ───────────────────────────────────────
-
-@router.get("/export", summary="导出全部数据为Excel")
-def export_excel(db: Session = Depends(get_db)):
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    ws = wb.create_sheet("款式")
-    ws.append(STYLE_HEADERS)
-    _apply_header_style(ws)
-    for s in crud.get_styles(db, limit=99999):
+    samples = crud.get_styles(db, limit=3)
+    for s in samples:
         ws.append([
             s.brand_attr, s.attr, s.fabric_type, s.year, s.gender, s.season,
             s.category, s.product_category, s.virtual_category,
-            s.product_code, s.code,
-            s.description,
+            s.product_code, s.code, s.description,
             s.colors_active, s.colors_discontinued, s.color_remark,
             s.sizes, s.size_specs, s.size_remark,
             s.printable_area,
@@ -470,11 +459,18 @@ def export_excel(db: Session = Depends(get_db)):
             s.dev_date, s.tag_price, s.premium_tag_price,
             s.exec_standard, s.safety_category, s.product_type,
         ])
+    return _stream_wb(wb, "template_styles.xlsx")
 
-    ws = wb.create_sheet("印花")
+
+@router.get("/template/prints", summary="下载印花导入模板")
+def template_prints(db: Session = Depends(get_db)):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "印花"
     ws.append(PRINT_HEADERS)
     _apply_header_style(ws)
-    for p in crud.get_prints(db, limit=99999):
+    samples = crud.get_prints(db, limit=3)
+    for p in samples:
         ws.append([
             p.name, p.pattern_size, p.pattern_spec, p.craft_attr, p.code,
             p.zwx_style_code, p.zwx_replace_code, p.zwx_replace_style,
@@ -482,23 +478,128 @@ def export_excel(db: Session = Depends(get_db)):
             p.city_style_code, p.city_replace_code, p.city_replace_style,
             p.tangshi_style_code, p.description,
         ])
+    return _stream_wb(wb, "template_prints.xlsx")
 
-    ws = wb.create_sheet("位置")
-    ws.append(POSITION_HEADERS)
-    _apply_header_style(ws)
-    for pos in crud.get_positions(db, limit=99999):
-        ws.append([pos.code, pos.name, pos.area, pos.description])
 
-    ws = wb.create_sheet("限定")
-    ws.append(RESTRICTION_HEADERS)
+@router.get("/template/positions", summary="下载位置模板（JSON/txt）")
+def template_positions(db: Session = Depends(get_db)):
+    """返回与导入格式完全一致的 JSON/txt 文件，取库中实际数据"""
+    AREA_KEY = {
+        "大图位置": "big_position",
+        "小图位置": "small_position",
+        "组合位置": "combination_position",
+    }
+    groups: dict = {}
+    for p in crud.get_positions(db, limit=99999):
+        key = AREA_KEY.get(p.area or "", p.area or "other")
+        groups.setdefault(key, {})[p.name] = p.code
+    content = json.dumps(groups, ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=template_positions.txt"},
+    )
+
+
+@router.get("/template/restrictions", summary="下载限定导入模板")
+def template_restrictions(db: Session = Depends(get_db)):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "限定"
+    ws.append(["白坯款式编码*", "位置名称（空=全禁该款式）", "允许印花编码（逗号分隔，空=不限）"])
     _apply_header_style(ws)
-    for r in crud.get_restrictions(db, limit=999999):
+    for r in crud.get_style_position_rules(db, limit=3):
         ws.append([
             r.style.code if r.style else "",
-            r.position.code if r.position else "",
-            r.print_item.code if r.print_item else "",
-            1 if r.is_active else 0,
-            r.remark,
+            r.position.name if r.position else "",
+            r.allowed_prints or "",
         ])
+    for b in crud.get_style_bans(db, limit=1):
+        ws.append([b.style.code if b.style else "", "", ""])
+    return _stream_wb(wb, "template_restrictions.xlsx")
 
-    return _stream_wb(wb, "export.xlsx")
+
+# ── 导出数据 ──────────────────────────────────────────────
+# entities 参数：逗号分隔，支持 styles / prints / positions / rules / bans
+# 不传或传 all 时导出全部
+
+_ALL_ENTITIES = ["styles", "prints", "positions", "rules", "bans"]
+
+
+@router.get("/export", summary="导出数据为Excel（支持选择实体）")
+def export_excel(
+    entities: Optional[str] = Query(None, description="逗号分隔: styles,prints,positions,rules,bans；不传=全量"),
+    db: Session = Depends(get_db),
+):
+    selected = (
+        {e.strip() for e in entities.split(",") if e.strip()}
+        if entities and entities.strip() and entities.strip() != "all"
+        else set(_ALL_ENTITIES)
+    )
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    if "styles" in selected:
+        ws = wb.create_sheet("款式")
+        ws.append(STYLE_HEADERS)
+        _apply_header_style(ws)
+        for s in crud.get_styles(db, limit=99999):
+            ws.append([
+                s.brand_attr, s.attr, s.fabric_type, s.year, s.gender, s.season,
+                s.category, s.product_category, s.virtual_category,
+                s.product_code, s.code, s.description,
+                s.colors_active, s.colors_discontinued, s.color_remark,
+                s.sizes, s.size_specs, s.size_remark,
+                s.printable_area,
+                s.fabric_composition, s.fabric_composition_en, s.hot_wind_composition,
+                s.fabric_name, s.fabric_weight, s.blank_weight,
+                s.dev_date, s.tag_price, s.premium_tag_price,
+                s.exec_standard, s.safety_category, s.product_type,
+            ])
+
+    if "prints" in selected:
+        ws = wb.create_sheet("印花")
+        ws.append(PRINT_HEADERS)
+        _apply_header_style(ws)
+        for p in crud.get_prints(db, limit=99999):
+            ws.append([
+                p.name, p.pattern_size, p.pattern_spec, p.craft_attr, p.code,
+                p.zwx_style_code, p.zwx_replace_code, p.zwx_replace_style,
+                p.jwco_style_code, p.jwco_replace_code, p.jwco_replace_style,
+                p.city_style_code, p.city_replace_code, p.city_replace_style,
+                p.tangshi_style_code, p.description,
+            ])
+
+    if "positions" in selected:
+        ws = wb.create_sheet("位置")
+        ws.append(POSITION_HEADERS)
+        _apply_header_style(ws)
+        for pos in crud.get_positions(db, limit=99999):
+            ws.append([pos.code, pos.name, pos.area, pos.description])
+
+    if "rules" in selected:
+        ws = wb.create_sheet("限定规则")
+        ws.append(["白坯款式编码", "位置名称", "允许印花编码(逗号分隔，空=不限)", "是否启用", "备注"])
+        _apply_header_style(ws)
+        for r in crud.get_style_position_rules(db, limit=999999):
+            ws.append([
+                r.style.code if r.style else "",
+                r.position.name if r.position else "",
+                r.allowed_prints or "",
+                1 if r.is_active else 0,
+                r.remark,
+            ])
+
+    if "bans" in selected:
+        ws = wb.create_sheet("全禁款式")
+        ws.append(["白坯款式编码", "备注"])
+        _apply_header_style(ws)
+        for b in crud.get_style_bans(db, limit=999999):
+            ws.append([b.style.code if b.style else "", b.remark])
+
+    if not wb.sheetnames:
+        raise HTTPException(400, "未选择任何有效的导出实体")
+
+    name = f"export_{selected.pop()}.xlsx" if len(selected) == 1 else "export_all.xlsx"
+    return _stream_wb(wb, name)

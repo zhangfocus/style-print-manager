@@ -20,10 +20,30 @@ interface PanelConfig {
 }
 
 const PANELS: PanelConfig[] = [
-  { key: 'styles',       label: '款式',  accept: '.xlsx,.xls', hint: '支持原始款式模版格式（31列），按白坯款式编码去重更新' },
-  { key: 'prints',       label: '印花',  accept: '.xlsx,.xls', hint: '支持原始印花.xlsx格式，按商品编码去重更新' },
-  { key: 'positions',    label: '位置',  accept: '.xlsx,.xls,.json,.txt', hint: '支持 Excel 或贴图位置字典 JSON/txt 格式' },
-  { key: 'restrictions', label: '限定',  accept: '.xlsx,.xls', hint: '列顺序：白坯款式编码*、位置编号*、印花编号*、是否启用(1/0)、备注' },
+  {
+    key: 'styles',
+    label: '款式',
+    accept: '.xlsx,.xls',
+    hint: '按模板格式导入，白坯款式编码为主键，重复则更新覆盖',
+  },
+  {
+    key: 'prints',
+    label: '印花',
+    accept: '.xlsx,.xls',
+    hint: '按模板格式导入，商品编码为主键，重复则更新覆盖',
+  },
+  {
+    key: 'positions',
+    label: '位置',
+    accept: '.txt,.json',
+    hint: '上传贴图位置字典 JSON/txt 文件，位置编号为主键，重复则更新',
+  },
+  {
+    key: 'restrictions',
+    label: '限定',
+    accept: '.xlsx,.xls',
+    hint: '按模板格式导入：白坯款式编码 + 位置名称 + 允许印花（逗号分隔，留空=不限）',
+  },
 ]
 
 interface PanelState {
@@ -64,6 +84,8 @@ function ImportPanel({ config }: { config: PanelConfig }) {
   return (
     <Card
       size="small"
+      style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+      styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column' } }}
       title={
         <Space>
           <FileExcelOutlined />
@@ -80,69 +102,88 @@ function ImportPanel({ config }: { config: PanelConfig }) {
         </Button>
       }
     >
-      <Dragger
-        accept={config.accept}
-        maxCount={1}
-        fileList={state.fileList}
-        beforeUpload={() => false}
-        onChange={({ fileList }) => update({ fileList, result: null })}
-        style={{ marginBottom: 10 }}
-      >
-        <p className="ant-upload-drag-icon" style={{ marginBottom: 4 }}>
-          <InboxOutlined />
-        </p>
-        <p className="ant-upload-text" style={{ fontSize: 13 }}>
-          点击或拖拽 Excel 文件到此区域
-        </p>
-        <p className="ant-upload-hint" style={{ fontSize: 12 }}>
-          {config.hint}
-        </p>
-      </Dragger>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <Dragger
+          accept={config.accept}
+          maxCount={1}
+          fileList={state.fileList}
+          beforeUpload={() => false}
+          onChange={({ fileList }) => update({ fileList, result: null })}
+          style={{ marginBottom: 10 }}
+        >
+          <p className="ant-upload-drag-icon" style={{ marginBottom: 4 }}>
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text" style={{ fontSize: 13 }}>
+            点击或拖拽文件到此处
+          </p>
+          <p className="ant-upload-hint" style={{ fontSize: 12 }}>
+            {config.hint}
+          </p>
+        </Dragger>
 
-      <Button
-        type="primary"
-        icon={<UploadOutlined />}
-        disabled={state.fileList.length === 0}
-        loading={state.importing}
-        onClick={handleImport}
-        block
-        size="small"
-      >
-        开始导入
-      </Button>
+        <Button
+          type="primary"
+          icon={<UploadOutlined />}
+          disabled={state.fileList.length === 0}
+          loading={state.importing}
+          onClick={handleImport}
+          block
+          size="small"
+        >
+          开始导入
+        </Button>
 
-      {state.result && (
-        <div style={{ marginTop: 10 }}>
-          <Alert
-            type={state.result.success ? 'success' : 'error'}
-            message={state.result.message}
-            showIcon
-          />
-          {state.result.details.errors.length > 0 && (
-            <List
-              style={{ marginTop: 6, background: '#fff2f0', padding: '6px 10px', borderRadius: 6 }}
-              size="small"
-              dataSource={state.result.details.errors}
-              renderItem={item => (
-                <List.Item style={{ padding: '2px 0', border: 'none' }}>
-                  <Text type="danger" style={{ fontSize: 12 }}>• {item}</Text>
-                </List.Item>
-              )}
+        {state.result && (
+          <div style={{ marginTop: 10 }}>
+            <Alert
+              type={state.result.success ? 'success' : 'error'}
+              message={state.result.message}
+              showIcon
             />
-          )}
-        </div>
-      )}
+            {state.result.details.errors.length > 0 && (
+              <List
+                style={{ marginTop: 6, background: '#fff2f0', padding: '6px 10px', borderRadius: 6 }}
+                size="small"
+                dataSource={state.result.details.errors}
+                renderItem={item => (
+                  <List.Item style={{ padding: '2px 0', border: 'none' }}>
+                    <Text type="danger" style={{ fontSize: 12 }}>• {item}</Text>
+                  </List.Item>
+                )}
+              />
+            )}
+          </div>
+        )}
+      </div>
     </Card>
   )
 }
+
+// ── 导出配置 ──────────────────────────────────────────────
+
+interface ExportOption {
+  key: string
+  label: string
+}
+
+const EXPORT_OPTIONS: ExportOption[] = [
+  { key: 'styles',    label: '款式' },
+  { key: 'prints',    label: '印花' },
+  { key: 'positions', label: '位置' },
+  { key: 'rules',     label: '限定规则' },
+  { key: 'bans',      label: '全禁款式' },
+]
+
+// ── 主页面 ────────────────────────────────────────────────
 
 export default function ExcelPage() {
   return (
     <div>
       {/* 分模块导入 */}
-      <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} align="stretch">
         {PANELS.map(p => (
-          <Col key={p.key} xs={24} sm={12} xl={6}>
+          <Col key={p.key} xs={24} sm={12} xl={6} style={{ display: 'flex' }}>
             <ImportPanel config={p} />
           </Col>
         ))}
@@ -150,14 +191,29 @@ export default function ExcelPage() {
 
       <Divider />
 
-      {/* 全量导出 */}
-      <Card title={<Space><FileExcelOutlined />全量数据导出</Space>} style={{ maxWidth: 400 }}>
+      {/* 数据导出 */}
+      <Card title={<Space><FileExcelOutlined />数据导出</Space>} style={{ maxWidth: 560 }}>
         <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-          将款式、印花、位置、限定全部数据导出为一个 Excel 文件（4个 Sheet）。
+          单独导出某一模块，或全量导出所有数据为一个 Excel 文件（多 Sheet）。
         </Text>
-        <Button icon={<FileExcelOutlined />} onClick={exportExcel}>
-          导出全部数据
-        </Button>
+        <Space wrap>
+          {EXPORT_OPTIONS.map(opt => (
+            <Button
+              key={opt.key}
+              icon={<DownloadOutlined />}
+              onClick={() => exportExcel(opt.key)}
+            >
+              导出{opt.label}
+            </Button>
+          ))}
+          <Button
+            type="primary"
+            icon={<FileExcelOutlined />}
+            onClick={() => exportExcel()}
+          >
+            全量导出
+          </Button>
+        </Space>
       </Card>
     </div>
   )

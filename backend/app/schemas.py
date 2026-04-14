@@ -168,29 +168,53 @@ class PositionOut(PositionBase):
         from_attributes = True
 
 
-# ───── Restriction ─────
-class RestrictionBase(BaseModel):
+# ───── StylePositionRule ─────
+class StylePositionRuleBase(BaseModel):
     style_id: int
     position_id: int
-    print_id: int
+    allowed_prints: Optional[str] = Field(None, description="允许印花编码(逗号分隔)，null=不限")
     is_active: bool = True
     remark: Optional[str] = None
 
 
-class RestrictionCreate(RestrictionBase):
+class StylePositionRuleCreate(StylePositionRuleBase):
     pass
 
 
-class RestrictionUpdate(BaseModel):
+class StylePositionRuleUpdate(BaseModel):
+    allowed_prints: Optional[str] = None
     is_active: Optional[bool] = None
     remark: Optional[str] = None
 
 
-class RestrictionOut(RestrictionBase):
+class StylePositionRuleOut(StylePositionRuleBase):
     id: int
     style: Optional[StyleOut] = None
     position: Optional[PositionOut] = None
-    print_item: Optional[PrintOut] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ───── StyleBan ─────
+class StyleBanBase(BaseModel):
+    style_id: int
+    remark: Optional[str] = None
+
+
+class StyleBanCreate(StyleBanBase):
+    pass
+
+
+class StyleBanUpdate(BaseModel):
+    remark: Optional[str] = None
+
+
+class StyleBanOut(StyleBanBase):
+    id: int
+    style: Optional[StyleOut] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

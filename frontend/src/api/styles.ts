@@ -1,8 +1,8 @@
 import client from './client'
 import type { Style } from '../types'
 
-export const listStyles = (keyword = '') =>
-  client.get<Style[]>('/styles/', { params: { keyword, limit: 500 } }).then(r => r.data)
+export const listStyles = (keyword = '', limit = 500) =>
+  client.get<Style[]>('/styles/', { params: { keyword, limit } }).then(r => r.data)
 
 export const createStyle = (data: Omit<Style, 'id' | 'created_at' | 'updated_at'>) =>
   client.post<Style>('/styles/', data).then(r => r.data)

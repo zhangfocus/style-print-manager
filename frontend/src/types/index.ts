@@ -70,16 +70,24 @@ export interface Position {
   updated_at?: string
 }
 
-export interface Restriction {
+export interface StylePositionRule {
   id: number
   style_id: number
   position_id: number
-  print_id: number
+  allowed_prints: string | null  // null=不限；逗号分隔的允许印花编码
   is_active: boolean
   remark?: string
   style?: Style
   position?: Position
-  print_item?: Print
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StyleBan {
+  id: number
+  style_id: number
+  remark?: string
+  style?: Style
   created_at?: string
   updated_at?: string
 }
