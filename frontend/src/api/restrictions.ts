@@ -7,15 +7,21 @@ export const listRules = (params?: { style_id?: number; position_id?: number; pr
   client.get<StylePositionRule[]>('/restrictions/', { params: { limit: 500, ...params } }).then(r => r.data)
 
 export const createRule = (data: {
-  style_id: number
-  position_id: number
+  rule_type: string
+  style_id?: number
+  position_id?: number
+  print_code?: string
   allowed_prints?: string | null
+  allowed_styles?: string | null
+  allowed_style_positions?: string | null
   is_active?: boolean
   remark?: string
 }) => client.post<StylePositionRule>('/restrictions/', data).then(r => r.data)
 
 export const updateRule = (id: number, data: {
   allowed_prints?: string | null
+  allowed_styles?: string | null
+  allowed_style_positions?: string | null
   is_active?: boolean
   remark?: string
 }) => client.put<StylePositionRule>(`/restrictions/${id}`, data).then(r => r.data)

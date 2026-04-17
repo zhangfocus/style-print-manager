@@ -4,11 +4,15 @@
 
 限定1（特殊款式限定位置）：4列 - 款式 | 位置 | 印花 | 限定款式
   形式1：A=款式(合并单元格可延续), B=位置, C=印花(空=不限), D=空
+        → rule_type='style_position'
   形式2：A=空, B=单位置, C=多印花, D=多款式(逗号分隔)
-  形式3：A=款式, B/C/D 全空 → 全禁该款式
+        → rule_type='position_print'
+  形式3：A=款式, B/C/D 全空
+        → rule_type='style_ban'
 
 限定2（魔术贴限定）：3列 - 印花编码 | 多款式 | 多位置
-  展开为每个款式 × 每个位置，将该印花加入允许列表（取并集）
+  展开为每个款式 × 每个位置，该印花只能贴这些组合
+  → rule_type='print_restriction'
 
 用法：
   cd C:/Users/Administrator/PythonProjects/style-print-manager/backend
@@ -58,9 +62,10 @@ def _parse_print_list(raw: str):
     return sorted(set(codes)) if codes else None
 
 
-# ── 写库操作（dry_run=True 时只统计不写） ────────────────────
+# ── 写库操作 ────────────────────────────────────────────────
 
-def _upsert_rule(db, style_code: str, position_name: str, new_prints, dry_run: bool):
+def _upsert_style_position_rule(db, style_code: str, position_name: str, new_prints, dry_run: bool):
+    """形式1：款式+位置 → 印花白名单"""
     style = crud.get_style_by_code(db, style_code)
     if not style:
         raise ValueError(f"款式 '{style_code}' 不在款式表中")
@@ -71,21 +76,29 @@ def _upsert_rule(db, style_code: str, position_name: str, new_prints, dry_run: b
     if dry_run:
         return
 
-    existing = crud.get_style_position_rule_by_key(db, style.id, position.id)
+    existing = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 'style_position',
+        models.StylePositionRule.style_id == style.id,
+        models.StylePositionRule.position_id == position.id
+    ).first()
+
     if existing:
         if new_prints is None:
-            if existing.allowed_prints is not None:
-                existing.allowed_prints = None
-                db.commit()
+            # 新规则说"不限" → 覆盖为 NULL
+            existing.allowed_prints = None
         else:
-            if existing.allowed_prints is not None:
+            # 合并印花白名单
+            if existing.allowed_prints:
                 old_set = set(existing.allowed_prints.split(","))
                 merged = sorted(old_set | set(new_prints))
                 existing.allowed_prints = ",".join(merged)
-                db.commit()
+            else:
+                existing.allowed_prints = ",".join(new_prints)
+        db.commit()
     else:
         ap = ",".join(new_prints) if new_prints else None
         db.add(models.StylePositionRule(
+            rule_type='style_position',
             style_id=style.id,
             position_id=position.id,
             allowed_prints=ap,
@@ -93,14 +106,88 @@ def _upsert_rule(db, style_code: str, position_name: str, new_prints, dry_run: b
         db.commit()
 
 
+def _upsert_position_print_rule(db, position_name: str, print_code: str, style_ids: list[int], dry_run: bool):
+    """形式2：位置+印花 → 款式白名单"""
+    position = crud.get_position_by_name(db, position_name)
+    if not position:
+        raise ValueError(f"位置 '{position_name}' 不在位置表中")
+
+    if not crud.get_print_by_code(db, print_code):
+        raise ValueError(f"印花 '{print_code}' 不在印花表中")
+
+    if dry_run:
+        return
+
+    existing = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 'position_print',
+        models.StylePositionRule.position_id == position.id,
+        models.StylePositionRule.print_code == print_code
+    ).first()
+
+    if existing:
+        # 合并款式白名单
+        old_ids = set(existing.allowed_styles.split(','))
+        new_ids = old_ids | set(map(str, style_ids))
+        existing.allowed_styles = ','.join(sorted(new_ids, key=int))
+        db.commit()
+    else:
+        db.add(models.StylePositionRule(
+            rule_type='position_print',
+            position_id=position.id,
+            print_code=print_code,
+            allowed_styles=','.join(map(str, style_ids))
+        ))
+        db.commit()
+
+
+def _upsert_print_restriction_rule(db, print_code: str, combos: list[tuple[int, int]], dry_run: bool):
+    """魔术贴限定：印花 → (款式,位置)组合白名单"""
+    if not crud.get_print_by_code(db, print_code):
+        raise ValueError(f"印花 '{print_code}' 不在印花表中")
+
+    if dry_run:
+        return
+
+    existing = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 'print_restriction',
+        models.StylePositionRule.print_code == print_code
+    ).first()
+
+    combo_strs = [f"{sid}:{pid}" for sid, pid in combos]
+
+    if existing:
+        # 合并款式位置组合
+        old_combos = set(existing.allowed_style_positions.split(','))
+        new_combos = old_combos | set(combo_strs)
+        existing.allowed_style_positions = ','.join(sorted(new_combos))
+        db.commit()
+    else:
+        db.add(models.StylePositionRule(
+            rule_type='print_restriction',
+            print_code=print_code,
+            allowed_style_positions=','.join(combo_strs)
+        ))
+        db.commit()
+
+
 def _upsert_ban(db, style_code: str, dry_run: bool):
+    """形式3：款式全禁"""
     style = crud.get_style_by_code(db, style_code)
     if not style:
         raise ValueError(f"款式 '{style_code}' 不在款式表中")
     if dry_run:
         return
-    if not crud.get_style_ban_by_style_id(db, style.id):
-        db.add(models.StyleBan(style_id=style.id))
+
+    existing = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 'style_ban',
+        models.StylePositionRule.style_id == style.id
+    ).first()
+
+    if not existing:
+        db.add(models.StylePositionRule(
+            rule_type='style_ban',
+            style_id=style.id
+        ))
         db.commit()
 
 
@@ -126,38 +213,43 @@ def import_file1(path: str, db, dry_run: bool):
         if not A and not B and not C and not D:
             continue
 
-        # 形式2：A 空，B 有位置，D 有多款式
-        if not A and B and D:
-            styles = _split_multi(D)
-            print_list = _parse_print_list(C)
-            for s in styles:
-                try:
-                    _upsert_rule(db, s, B, print_list, dry_run)
-                    form2_count += 1
-                except Exception as e:
-                    errors.append(f"第{row_idx}行 形式2 ({s}, {B}): {e}")
-            continue
-
-        # 形式3：A 有款式，B/C/D 全空 → 全禁
-        if A and not B and not C and not D:
-            try:
+        try:
+            # 形式3：款式全禁
+            if A and not B and not C and not D:
                 _upsert_ban(db, A, dry_run)
                 ban_count += 1
-            except Exception as e:
-                errors.append(f"第{row_idx}行 全禁 ({A}): {e}")
-            last_style = None
-            continue
+                last_style = None
+                continue
 
-        # 形式1：A 有值更新 last_style；A 空沿用 last_style
-        if A:
-            last_style = A
-        if last_style and B:
-            print_list = _parse_print_list(C)
-            try:
-                _upsert_rule(db, last_style, B, print_list, dry_run)
+            # 形式2：位置+印花 → 多款式
+            if not A and B and C and D:
+                print_codes = _split_multi(C)
+                style_codes = _split_multi(D)
+
+                # 获取款式ID列表
+                style_ids = []
+                for sc in style_codes:
+                    style = crud.get_style_by_code(db, sc)
+                    if not style:
+                        raise ValueError(f"款式 {sc} 不存在")
+                    style_ids.append(style.id)
+
+                for print_code in print_codes:
+                    _upsert_position_print_rule(db, B, print_code, style_ids, dry_run)
+                    form2_count += 1
+
+                continue
+
+            # 形式1：款式+位置 → 印花列表
+            if A:
+                last_style = A
+            if last_style and B:
+                print_list = _parse_print_list(C)
+                _upsert_style_position_rule(db, last_style, B, print_list, dry_run)
                 rule_count += 1
-            except Exception as e:
-                errors.append(f"第{row_idx}行 ({last_style}, {B}): {e}")
+
+        except Exception as e:
+            errors.append(f"第{row_idx}行: {e}")
 
     return rule_count, form2_count, ban_count, errors
 
@@ -167,7 +259,7 @@ def import_file1(path: str, db, dry_run: bool):
 def import_file2(path: str, db, dry_run: bool):
     """
     3列：印花编码 | 多款式（逗号分隔）| 多位置（逗号分隔）
-    展开为：每个款式 × 每个位置 → 将该印花加入允许列表
+    展开为：每个款式 × 每个位置 → 该印花只能贴这些组合
     """
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
@@ -183,16 +275,29 @@ def import_file2(path: str, db, dry_run: bool):
         if not A or not B or not C:
             continue
 
-        styles    = _split_multi(B)
-        positions = _split_multi(C)
+        try:
+            style_codes = _split_multi(B)
+            position_names = _split_multi(C)
 
-        for style in styles:
-            for pos in positions:
-                try:
-                    _upsert_rule(db, style, pos, [A], dry_run)
-                    rule_count += 1
-                except Exception as e:
-                    errors.append(f"第{row_idx}行 ({style}, {pos}, {A}): {e}")
+            # 构建款式位置组合
+            combos = []
+            for sc in style_codes:
+                style = crud.get_style_by_code(db, sc)
+                if not style:
+                    raise ValueError(f"款式 {sc} 不存在")
+
+                for pn in position_names:
+                    position = crud.get_position_by_name(db, pn)
+                    if not position:
+                        raise ValueError(f"位置 {pn} 不存在")
+
+                    combos.append((style.id, position.id))
+
+            _upsert_print_restriction_rule(db, A, combos, dry_run)
+            rule_count += 1
+
+        except Exception as e:
+            errors.append(f"第{row_idx}行: {e}")
 
     return rule_count, errors
 
@@ -217,8 +322,8 @@ def main():
         if Path(args.file1).exists():
             print(f"\n{mode} 导入限定1：{args.file1}")
             r1, r2, bans, errs = import_file1(args.file1, db, args.dry_run)
-            print(f"  形式1（款式+位置）：{r1} 条")
-            print(f"  形式2（位置+多款式）：{r2} 条")
+            print(f"  形式1（款式+位置→印花）：{r1} 条")
+            print(f"  形式2（位置+印花→款式）：{r2} 条")
             print(f"  全禁款式：{bans} 条")
             if errs:
                 print(f"  错误 ({len(errs)} 条)：")
@@ -235,7 +340,7 @@ def main():
         if Path(args.file2).exists():
             print(f"\n{mode} 导入限定2：{args.file2}")
             r, errs = import_file2(args.file2, db, args.dry_run)
-            print(f"  展开规则：{r} 条（款式 × 位置）")
+            print(f"  印花限定规则：{r} 条")
             if errs:
                 print(f"  错误 ({len(errs)} 条)：")
                 for e in errs[:20]:

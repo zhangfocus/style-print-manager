@@ -86,14 +86,31 @@ class Position(Base):
 
 
 class StylePositionRule(Base):
-    """限定规则：款式 + 位置 → 允许的印花列表"""
+    """
+    统一限定规则表
+    支持四种规则类型：
+    1. style_position: 款式+位置 → 印花白名单
+    2. position_print: 位置+印花 → 款式白名单
+    3. print_restriction: 印花 → (款式,位置)组合白名单
+    4. style_ban: 款式全禁
+    """
     __tablename__ = "style_position_rules"
 
     id = Column(Integer, primary_key=True, index=True)
-    style_id = Column(Integer, ForeignKey("styles.id", ondelete="CASCADE"), nullable=False, index=True)
-    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=False, index=True)
-    # NULL = 该位置不限制任何印花；非 NULL = 英文逗号分隔的允许印花编码列表
+
+    # 规则类型
+    rule_type = Column(String(32), nullable=False, index=True, comment="规则类型: style_position|position_print|print_restriction|style_ban")
+
+    # 三个维度的键（根据 rule_type 填充对应字段）
+    style_id = Column(Integer, ForeignKey("styles.id", ondelete="CASCADE"), nullable=True, index=True)
+    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=True, index=True)
+    print_code = Column(String(64), nullable=True, index=True, comment="印花编码")
+
+    # 三种约束目标（根据 rule_type 填充对应字段）
     allowed_prints = Column(Text, nullable=True, comment="允许印花编码(逗号分隔)，NULL=不限")
+    allowed_styles = Column(Text, nullable=True, comment="允许款式ID(逗号分隔)")
+    allowed_style_positions = Column(Text, nullable=True, comment="允许款式位置组合(格式: 款式ID:位置ID,款式ID:位置ID)")
+
     is_active = Column(Boolean, default=True, comment="是否启用")
     remark = Column(Text, nullable=True, comment="备注")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -101,20 +118,3 @@ class StylePositionRule(Base):
 
     style = relationship("Style")
     position = relationship("Position")
-
-    __table_args__ = (
-        UniqueConstraint("style_id", "position_id", name="uq_style_position"),
-    )
-
-
-class StyleBan(Base):
-    """全禁款式：该款式不允许贴任何位置任何印花"""
-    __tablename__ = "style_bans"
-
-    id = Column(Integer, primary_key=True, index=True)
-    style_id = Column(Integer, ForeignKey("styles.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
-    remark = Column(Text, nullable=True, comment="备注")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
-
-    style = relationship("Style")
