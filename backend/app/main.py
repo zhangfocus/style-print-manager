@@ -41,6 +41,6 @@ _DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if _DIST.exists():
     app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    def serve_frontend(full_path: str):
+    @app.get("/", include_in_schema=False)
+    def serve_root():
         return FileResponse(_DIST / "index.html")

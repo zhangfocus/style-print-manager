@@ -3,25 +3,26 @@ import type { StylePositionRule, StyleBan } from '../types'
 
 // ── 限定规则 ──────────────────────────────────────────────
 
-export const listRules = (params?: { style_id?: number; position_id?: number; print_code?: string; limit?: number }) =>
-  client.get<StylePositionRule[]>('/restrictions/', { params: { limit: 500, ...params } }).then(r => r.data)
+export const listRules = (params?: { style_id?: number; position_id?: number; print_id?: number; rule_type?: string; page?: number; page_size?: number }) =>
+  client.get<{ items: StylePositionRule[]; total: number; page: number; page_size: number }>('/restrictions/', { params: { page: 1, page_size: 10, ...params } }).then(r => r.data)
 
 export const createRule = (data: {
   rule_type: string
   style_id?: number
   position_id?: number
-  print_code?: string
-  allowed_prints?: string | null
-  allowed_styles?: string | null
-  allowed_style_positions?: string | null
+  print_id?: number
+  allowed_print_ids?: string | null
+  allowed_style_ids?: string | null
   is_active?: boolean
   remark?: string
 }) => client.post<StylePositionRule>('/restrictions/', data).then(r => r.data)
 
 export const updateRule = (id: number, data: {
-  allowed_prints?: string | null
-  allowed_styles?: string | null
-  allowed_style_positions?: string | null
+  style_id?: number
+  position_id?: number
+  print_id?: number
+  allowed_print_ids?: string | null
+  allowed_style_ids?: string | null
   is_active?: boolean
   remark?: string
 }) => client.put<StylePositionRule>(`/restrictions/${id}`, data).then(r => r.data)

@@ -88,28 +88,26 @@ class Position(Base):
 class StylePositionRule(Base):
     """
     统一限定规则表
-    支持四种规则类型：
-    1. style_position: 款式+位置 → 印花白名单
-    2. position_print: 位置+印花 → 款式白名单
-    3. print_restriction: 印花 → (款式,位置)组合白名单
-    4. style_ban: 款式全禁
+    支持三种规则类型：
+    1. style_position: 款式+位置 → 印花白名单（可为空表示不限）
+    2. position_restriction: 位置 → 印花白名单+款式白名单
+    3. style_ban: 款式全禁
     """
     __tablename__ = "style_position_rules"
 
     id = Column(Integer, primary_key=True, index=True)
 
     # 规则类型
-    rule_type = Column(String(32), nullable=False, index=True, comment="规则类型: style_position|position_print|print_restriction|style_ban")
+    rule_type = Column(String(32), nullable=False, index=True, comment="规则类型: style_position|position_restriction|style_ban")
 
     # 三个维度的键（根据 rule_type 填充对应字段）
     style_id = Column(Integer, ForeignKey("styles.id", ondelete="CASCADE"), nullable=True, index=True)
     position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=True, index=True)
-    print_code = Column(String(64), nullable=True, index=True, comment="印花编码")
+    print_id = Column(Integer, ForeignKey("prints.id", ondelete="CASCADE"), nullable=True, index=True, comment="印花ID")
 
-    # 三种约束目标（根据 rule_type 填充对应字段）
-    allowed_prints = Column(Text, nullable=True, comment="允许印花编码(逗号分隔)，NULL=不限")
-    allowed_styles = Column(Text, nullable=True, comment="允许款式ID(逗号分隔)")
-    allowed_style_positions = Column(Text, nullable=True, comment="允许款式位置组合(格式: 款式ID:位置ID,款式ID:位置ID)")
+    # 两种约束目标（根据 rule_type 填充对应字段）
+    allowed_print_ids = Column(Text, nullable=True, comment="允许印花ID(逗号分隔)，NULL=不限")
+    allowed_style_ids = Column(Text, nullable=True, comment="允许款式ID(逗号分隔)")
 
     is_active = Column(Boolean, default=True, comment="是否启用")
     remark = Column(Text, nullable=True, comment="备注")
@@ -118,3 +116,4 @@ class StylePositionRule(Base):
 
     style = relationship("Style")
     position = relationship("Position")
+    print_obj = relationship("Print")

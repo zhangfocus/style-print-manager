@@ -20,7 +20,10 @@ export default function StylesPage() {
 
   const load = async (kw = keyword) => {
     setLoading(true)
-    try { setData(await listStyles(kw)) }
+    try {
+      const res = await listStyles(kw)
+      setData(res.items)
+    }
     catch (e: unknown) { message.error((e as Error).message) }
     finally { setLoading(false) }
   }

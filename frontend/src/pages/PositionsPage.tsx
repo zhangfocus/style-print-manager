@@ -20,7 +20,8 @@ export default function PositionsPage() {
   const load = async (kw = keyword) => {
     setLoading(true)
     try {
-      setData(await listPositions(kw))
+      const res = await listPositions(kw)
+      setData(res.items)
     } catch (e: unknown) {
       message.error((e as Error).message)
     } finally {

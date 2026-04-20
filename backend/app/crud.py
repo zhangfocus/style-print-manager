@@ -5,7 +5,7 @@ from . import models, schemas
 
 
 # ───── Style CRUD ─────
-def get_styles(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
+def get_styles(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
     q = db.query(models.Style)
     if keyword:
         q = q.filter(or_(
@@ -13,7 +13,9 @@ def get_styles(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
             models.Style.product_code.contains(keyword),
             models.Style.product_category.contains(keyword),
         ))
-    return q.offset(skip).limit(limit).all()
+    total = q.count()
+    items = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def get_style(db: Session, style_id: int):
@@ -52,7 +54,7 @@ def delete_style(db: Session, style_id: int):
 
 
 # ───── Print CRUD ─────
-def get_prints(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
+def get_prints(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
     q = db.query(models.Print)
     if keyword:
         q = q.filter(or_(
@@ -60,7 +62,9 @@ def get_prints(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
             models.Print.name.contains(keyword),
             models.Print.craft_attr.contains(keyword),
         ))
-    return q.offset(skip).limit(limit).all()
+    total = q.count()
+    items = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def get_print(db: Session, print_id: int):
@@ -99,11 +103,13 @@ def delete_print(db: Session, print_id: int):
 
 
 # ───── Position CRUD ─────
-def get_positions(db: Session, skip: int = 0, limit: int = 200, keyword: str = ""):
+def get_positions(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
     q = db.query(models.Position)
     if keyword:
         q = q.filter(or_(models.Position.name.contains(keyword), models.Position.code.contains(keyword)))
-    return q.offset(skip).limit(limit).all()
+    total = q.count()
+    items = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def get_position(db: Session, position_id: int):
@@ -148,11 +154,12 @@ def delete_position(db: Session, position_id: int):
 # ───── StylePositionRule CRUD ─────
 def get_style_position_rules(
     db: Session,
-    skip: int = 0,
-    limit: int = 500,
+    page: int = 1,
+    page_size: int = 10,
     style_id: Optional[int] = None,
     position_id: Optional[int] = None,
-    print_code: Optional[str] = None,
+    print_id: Optional[int] = None,
+    rule_type: Optional[str] = None,
 ):
     """
     查询限定规则（支持多种规则类型）
@@ -162,6 +169,7 @@ def get_style_position_rules(
     q = db.query(models.StylePositionRule).options(
         joinedload(models.StylePositionRule.style),
         joinedload(models.StylePositionRule.position),
+        joinedload(models.StylePositionRule.print_obj),
     )
 
     # 按维度过滤
@@ -169,33 +177,16 @@ def get_style_position_rules(
         q = q.filter(models.StylePositionRule.style_id == style_id)
     if position_id:
         q = q.filter(models.StylePositionRule.position_id == position_id)
-    if print_code:
-        # 印花过滤：匹配 print_code 字段或 allowed_prints 中包含该编码
-        q = q.filter(
-            or_(
-                models.StylePositionRule.print_code == print_code,
-                models.StylePositionRule.allowed_prints.contains(print_code),
-            )
-        )
+    if print_id:
+        q = q.filter(models.StylePositionRule.print_id == print_id)
+    if rule_type:
+        q = q.filter(models.StylePositionRule.rule_type == rule_type)
 
-    rules = q.order_by(models.StylePositionRule.created_at.desc()).offset(skip).limit(limit).all()
+    q = q.order_by(models.StylePositionRule.created_at.desc())
+    total = q.count()
+    items = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
-    # 为每条规则计算 allowed_style_positions_display
-    for rule in rules:
-        if rule.allowed_style_positions:
-            display_parts = []
-            for pair in rule.allowed_style_positions.split(','):
-                if ':' in pair:
-                    sid, pid = pair.split(':')
-                    style = db.query(models.Style).filter_by(id=int(sid)).first()
-                    position = db.query(models.Position).filter_by(id=int(pid)).first()
-                    if style and position:
-                        display_parts.append(f"{style.code}:{position.name}")
-            rule.allowed_style_positions_display = ', '.join(display_parts) if display_parts else rule.allowed_style_positions
-        else:
-            rule.allowed_style_positions_display = None
-
-    return rules
 
 
 def query_allowed_prints(

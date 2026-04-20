@@ -170,13 +170,12 @@ class PositionOut(PositionBase):
 
 # ───── StylePositionRule (统一限定规则) ─────
 class StylePositionRuleBase(BaseModel):
-    rule_type: str = Field(..., description="规则类型: style_position|position_print|print_restriction|style_ban")
+    rule_type: str = Field(..., description="规则类型: style_position|position_restriction|style_ban")
     style_id: Optional[int] = None
     position_id: Optional[int] = None
-    print_code: Optional[str] = None
-    allowed_prints: Optional[str] = Field(None, description="允许印花编码(逗号分隔)，null=不限")
-    allowed_styles: Optional[str] = Field(None, description="允许款式ID(逗号分隔)")
-    allowed_style_positions: Optional[str] = Field(None, description="允许款式位置组合(格式: 款式ID:位置ID,款式ID:位置ID)")
+    print_id: Optional[int] = None
+    allowed_print_ids: Optional[str] = Field(None, description="允许印花ID(逗号分隔)，null=不限")
+    allowed_style_ids: Optional[str] = Field(None, description="允许款式ID(逗号分隔)")
     is_active: bool = True
     remark: Optional[str] = None
 
@@ -186,9 +185,8 @@ class StylePositionRuleCreate(StylePositionRuleBase):
 
 
 class StylePositionRuleUpdate(BaseModel):
-    allowed_prints: Optional[str] = None
-    allowed_styles: Optional[str] = None
-    allowed_style_positions: Optional[str] = None
+    allowed_print_ids: Optional[str] = None
+    allowed_style_ids: Optional[str] = None
     is_active: Optional[bool] = None
     remark: Optional[str] = None
 
@@ -197,9 +195,9 @@ class StylePositionRuleOut(StylePositionRuleBase):
     id: int
     style: Optional[StyleOut] = None
     position: Optional[PositionOut] = None
+    print_obj: Optional[PrintOut] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    allowed_style_positions_display: Optional[str] = Field(None, description="允许款式位置组合(可读格式)")
 
     class Config:
         from_attributes = True

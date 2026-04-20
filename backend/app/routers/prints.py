@@ -7,9 +7,9 @@ from ..database import get_db
 router = APIRouter(prefix="/api/prints", tags=["印花"])
 
 
-@router.get("/", response_model=List[schemas.PrintOut])
-def list_prints(keyword: str = Query("", description="搜索关键词"), skip: int = 0, limit: int = 200, db: Session = Depends(get_db)):
-    return crud.get_prints(db, skip=skip, limit=limit, keyword=keyword)
+@router.get("/")
+def list_prints(keyword: str = Query("", description="搜索关键词"), page: int = 1, page_size: int = 10, db: Session = Depends(get_db)):
+    return crud.get_prints(db, page=page, page_size=page_size, keyword=keyword)
 
 
 @router.get("/{print_id}", response_model=schemas.PrintOut)

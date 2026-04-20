@@ -7,9 +7,9 @@ from ..database import get_db
 router = APIRouter(prefix="/api/positions", tags=["位置"])
 
 
-@router.get("/", response_model=List[schemas.PositionOut])
-def list_positions(keyword: str = Query("", description="搜索关键词"), skip: int = 0, limit: int = 200, db: Session = Depends(get_db)):
-    return crud.get_positions(db, skip=skip, limit=limit, keyword=keyword)
+@router.get("/")
+def list_positions(keyword: str = Query("", description="搜索关键词"), page: int = 1, page_size: int = 10, db: Session = Depends(get_db)):
+    return crud.get_positions(db, page=page, page_size=page_size, keyword=keyword)
 
 
 @router.get("/{position_id}", response_model=schemas.PositionOut)

@@ -19,7 +19,10 @@ export default function PrintsPage() {
 
   const load = async (kw = keyword) => {
     setLoading(true)
-    try { setData(await listPrints(kw)) }
+    try {
+      const res = await listPrints(kw)
+      setData(res.items)
+    }
     catch (e: unknown) { message.error((e as Error).message) }
     finally { setLoading(false) }
   }
