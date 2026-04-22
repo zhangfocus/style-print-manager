@@ -225,6 +225,8 @@ def create_style_position_rule(db: Session, data: schemas.StylePositionRuleCreat
             if not style:
                 raise ValueError(f"款式编码 '{code}' 不存在")
             style_id_list.append(str(style.id))
+        # 去重、排序，确保唯一性约束正常工作
+        style_id_list = sorted(set(style_id_list), key=int)
         style_ids = ",".join(style_id_list)
 
     # 3. 转换 print_codes 为 print_ids
@@ -236,9 +238,22 @@ def create_style_position_rule(db: Session, data: schemas.StylePositionRuleCreat
             if not print_obj:
                 raise ValueError(f"印花编码 '{code}' 不存在")
             print_id_list.append(str(print_obj.id))
+        # 去重、排序，确保唯一性约束正常工作
+        print_id_list = sorted(set(print_id_list), key=int)
         print_ids = ",".join(print_id_list)
 
-    # 4. 创建规则
+    # 4. 创建规则前的额外校验
+    # 类型3不能与类型2位置冲突
+    if data.rule_type == 3 and position_id:
+        existing_type2 = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 2,
+            models.StylePositionRule.position_id == position_id,
+            models.StylePositionRule.is_active == True
+        ).first()
+        if existing_type2:
+            raise ValueError(f"位置 '{data.position_code}' 已有位置限定规则（类型2），不能创建款式位置规则（类型3）")
+
+    # 5. 创建规则
     obj = models.StylePositionRule(
         rule_type=data.rule_type,
         position_id=position_id,
@@ -279,6 +294,8 @@ def update_style_position_rule(db: Session, rule_id: int, data: schemas.StylePos
                 if not style:
                     raise ValueError(f"款式编码 '{code}' 不存在")
                 style_id_list.append(str(style.id))
+            # 去重、排序，确保唯一性约束正常工作
+            style_id_list = sorted(set(style_id_list), key=int)
             obj.style_ids = ",".join(style_id_list)
         else:
             obj.style_ids = None
@@ -292,6 +309,8 @@ def update_style_position_rule(db: Session, rule_id: int, data: schemas.StylePos
                 if not print_obj:
                     raise ValueError(f"印花编码 '{code}' 不存在")
                 print_id_list.append(str(print_obj.id))
+            # 去重、排序，确保唯一性约束正常工作
+            print_id_list = sorted(set(print_id_list), key=int)
             obj.print_ids = ",".join(print_id_list)
         else:
             obj.print_ids = None

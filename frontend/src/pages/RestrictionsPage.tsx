@@ -239,9 +239,13 @@ export default function RestrictionsPage() {
         const position = positions.find(p => p.id === values.position_id)
         payload.position_code = position?.code || null
 
-        payload.style_codes = Array.isArray(values.style_ids)
-          ? values.style_ids.map((id: number) => styles.find(s => s.id === id)?.code).filter(Boolean)
-          : null
+        // 类型3款式是单选，转为单元素数组
+        if (values.style_ids) {
+          const style = styles.find(s => s.id === values.style_ids)
+          payload.style_codes = style ? [style.code] : null
+        } else {
+          payload.style_codes = null
+        }
 
         payload.print_codes = Array.isArray(values.print_ids)
           ? values.print_ids.map((id: number) => prints.find(p => p.id === id)?.code).filter(Boolean)
@@ -258,9 +262,13 @@ export default function RestrictionsPage() {
           ? values.print_ids.map((id: number) => prints.find(p => p.id === id)?.code).filter(Boolean)
           : null
       } else if (values.rule_type === 1) {  // style_ban
-        payload.style_codes = Array.isArray(values.style_ids)
-          ? values.style_ids.map((id: number) => styles.find(s => s.id === id)?.code).filter(Boolean)
-          : null
+        // 类型1款式是单选，转为单元素数组
+        if (values.style_ids) {
+          const style = styles.find(s => s.id === values.style_ids)
+          payload.style_codes = style ? [style.code] : null
+        } else {
+          payload.style_codes = null
+        }
       }
 
       if (editingRule) {
@@ -637,7 +645,6 @@ export default function RestrictionsPage() {
               rules={[{ required: true, message: '请选择款式' }]}
             >
               <Select
-                mode="multiple"
                 showSearch
                 placeholder="选择款式"
                 options={styleOptions}
