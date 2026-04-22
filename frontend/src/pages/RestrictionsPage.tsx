@@ -453,6 +453,23 @@ export default function RestrictionsPage() {
         />
       )
     }
+    if (activeTab === 2) {  // position_restriction
+      return (
+        <Select
+          showSearch
+          placeholder="筛选位置"
+          allowClear
+          style={{ width: 150 }}
+          value={filterPositionId}
+          onChange={setFilterPositionId}
+          options={positionOptions}
+          loading={positionSearching}
+          onSearch={searchPositions}
+          filterOption={false}
+        />
+      )
+    }
+    // activeTab === 3, style_position
     return (
       <>
         <Select
@@ -479,20 +496,6 @@ export default function RestrictionsPage() {
           onSearch={searchPositions}
           filterOption={false}
         />
-        {activeTab === 2 && (  // position_restriction
-          <Select
-            showSearch
-            placeholder="筛选印花"
-            allowClear
-            style={{ width: 200 }}
-            value={filterPrintId}
-            onChange={setFilterPrintId}
-            options={printOptions}
-            loading={printSearching}
-            onSearch={searchPrints}
-            filterOption={false}
-          />
-        )}
       </>
     )
   }

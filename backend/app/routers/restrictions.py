@@ -89,117 +89,286 @@ def list_rules(
     }
 
 
-@router.get("/{rule_id}")
-def get_rule(rule_id: int, db: Session = Depends(get_db)):
+@router.post("/check", response_model=schemas.RestrictionCheckResponse)
+def check_restriction(
+    data: schemas.RestrictionCheckRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    校验款式+位置+印花组合是否被允许
+    """
+    from sqlalchemy import text
     from .. import models
 
-    obj = crud.get_style_position_rule(db, rule_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="规则不存在")
+    style_id = data.style_id
+    position_id = data.position_id
+    print_id = data.print_id
 
-    # 转换 ID 为 code 用于显示
-    prints_display = None
-    if obj.print_ids:
-        print_ids = [int(pid.strip()) for pid in obj.print_ids.split(',') if pid.strip()]
-        prints = db.query(models.Print).filter(models.Print.id.in_(print_ids)).all()
-        prints_display = ', '.join([p.code for p in prints])
+    # 步骤1: 检查款式全禁（类型1）
+    style_ban = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 1,
+        text(f"FIND_IN_SET({style_id}, style_ids) > 0"),
+        models.StylePositionRule.is_active == True
+    ).first()
 
-    styles_display = None
-    if obj.style_ids:
-        style_ids = [int(sid.strip()) for sid in obj.style_ids.split(',') if sid.strip()]
-        styles = db.query(models.Style).filter(models.Style.id.in_(style_ids)).all()
-        styles_display = ', '.join([s.code for s in styles])
+    if style_ban:
+        return schemas.RestrictionCheckResponse(
+            allowed=False,
+            reason=f"款式 {style_id} 完全禁止印花",
+            rule_type="style_ban",
+            rule_id=style_ban.id
+        )
 
-    return {
-        "id": obj.id,
-        "rule_type": obj.rule_type,
-        "position_id": obj.position_id,
-        "style_ids": obj.style_ids,
-        "print_ids": obj.print_ids,
-        "print_ids_display": prints_display,
-        "style_ids_display": styles_display,
-        "is_active": obj.is_active,
-        "created_at": obj.created_at,
-        "updated_at": obj.updated_at,
-        "position": schemas.PositionOut.model_validate(obj.position) if obj.position else None,
-    }
+    # 步骤2: 检查位置限定（类型2，优先级最高）
+    position_restriction = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 2,
+        models.StylePositionRule.position_id == position_id,
+        models.StylePositionRule.is_active == True
+    ).first()
+
+    if position_restriction:
+        # 检查款式是否在白名单中
+        style_ids_list = position_restriction.style_ids.split(',') if position_restriction.style_ids else None
+
+        if style_ids_list is not None:
+            if str(style_id) not in [s.strip() for s in style_ids_list]:
+                return schemas.RestrictionCheckResponse(
+                    allowed=False,
+                    reason=f"款式 {style_id} 不在位置 {position_id} 的允许款式列表中",
+                    rule_type="position_restriction",
+                    rule_id=position_restriction.id
+                )
+
+        # 检查印花是否在白名单中
+        print_ids_list = position_restriction.print_ids.split(',') if position_restriction.print_ids else None
+
+        if print_ids_list is not None:
+            if str(print_id) not in [p.strip() for p in print_ids_list]:
+                return schemas.RestrictionCheckResponse(
+                    allowed=False,
+                    reason=f"印花 {print_id} 不在位置 {position_id} 的允许印花列表中",
+                    rule_type="position_restriction",
+                    rule_id=position_restriction.id
+                )
+
+        # 位置限定通过
+        return schemas.RestrictionCheckResponse(
+            allowed=True,
+            reason=f"符合位置 {position_id} 的限定规则",
+            rule_type="position_restriction",
+            rule_id=position_restriction.id
+        )
+
+    # 步骤3: 检查款式位置限定（类型3，黑名单策略）
+    style_position_rules = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 3,
+        text(f"FIND_IN_SET({style_id}, style_ids) > 0"),
+        models.StylePositionRule.is_active == True
+    ).all()
+
+    if style_position_rules:
+        # 款式有类型3规则，检查该位置是否在白名单中
+        style_position_for_this_pos = None
+        for rule in style_position_rules:
+            if rule.position_id == position_id:
+                style_position_for_this_pos = rule
+                break
+
+        if style_position_for_this_pos is None:
+            # 该位置不在款式的白名单中（黑名单策略）
+            return schemas.RestrictionCheckResponse(
+                allowed=False,
+                reason=f"款式 {style_id} 在位置 {position_id} 不可用（未在白名单中）",
+                rule_type="style_position",
+                rule_id=None
+            )
+
+        # 该位置在白名单中，检查印花
+        print_ids_list = style_position_for_this_pos.print_ids.split(',') if style_position_for_this_pos.print_ids else None
+
+        if print_ids_list is None:
+            # 不限印花
+            return schemas.RestrictionCheckResponse(
+                allowed=True,
+                reason=f"款式 {style_id} 在位置 {position_id} 不限印花",
+                rule_type="style_position",
+                rule_id=style_position_for_this_pos.id
+            )
+
+        # 检查印花是否在白名单中
+        if str(print_id) not in [p.strip() for p in print_ids_list]:
+            return schemas.RestrictionCheckResponse(
+                allowed=False,
+                reason=f"印花 {print_id} 不在款式 {style_id} + 位置 {position_id} 的允许印花列表中",
+                rule_type="style_position",
+                rule_id=style_position_for_this_pos.id
+            )
+
+        # 款式位置限定通过
+        return schemas.RestrictionCheckResponse(
+            allowed=True,
+            reason=f"符合款式 {style_id} 在位置 {position_id} 的限定规则",
+            rule_type="style_position",
+            rule_id=style_position_for_this_pos.id
+        )
+
+    # 步骤4: 默认允许
+    return schemas.RestrictionCheckResponse(
+        allowed=True,
+        reason="无限定规则，默认允许",
+        rule_type=None,
+        rule_id=None
+    )
 
 
-@router.post("/", status_code=201)
-def create_rule(data: schemas.StylePositionRuleCreate, db: Session = Depends(get_db)):
-    try:
-        # 根据规则类型验证必填字段
-        if data.rule_type == 3:  # style_position
-            if not data.style_codes or not data.position_code:
-                raise HTTPException(400, "款式位置规则需要 style_codes 和 position_code")
-            if len(data.style_codes) != 1:
-                raise HTTPException(400, "款式位置规则只能指定一个款式")
-        elif data.rule_type == 2:  # position_restriction
-            if not data.position_code:
-                raise HTTPException(400, "位置限定规则需要 position_code")
-            if not data.style_codes and not data.print_codes:
-                raise HTTPException(400, "位置限定规则的 style_codes 和 print_codes 不能同时为空")
-        elif data.rule_type == 1:  # style_ban
-            if not data.style_codes:
-                raise HTTPException(400, "款式全禁规则需要 style_codes")
-            if len(data.style_codes) != 1:
-                raise HTTPException(400, "款式全禁规则只能指定一个款式")
-        else:
-            raise HTTPException(400, f"未知的规则类型: {data.rule_type}")
+@router.get("/available-by-style", response_model=schemas.AvailableByStyleResponse)
+def get_available_by_style(
+    style_id: int = Query(..., description="款式ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    查询款式在所有位置上可用的印花列表（带位置对应关系）
+    """
+    from sqlalchemy import text
+    from .. import models
 
-        obj = crud.create_style_position_rule(db, data)
-        return {"id": obj.id, "message": "创建成功"}
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # 步骤1: 检查款式全禁
+    style_ban = db.query(models.StylePositionRule).filter(
+        models.StylePositionRule.rule_type == 1,
+        text(f"FIND_IN_SET({style_id}, style_ids) > 0"),
+        models.StylePositionRule.is_active == True
+    ).first()
 
+    if style_ban:
+        return schemas.AvailableByStyleResponse(
+            style_id=style_id,
+            is_banned=True,
+            available_positions=[]
+        )
 
-@router.put("/{rule_id}")
-def update_rule(rule_id: int, data: schemas.StylePositionRuleUpdate, db: Session = Depends(get_db)):
-    try:
-        # 获取现有规则
-        existing_rule = db.query(models.StylePositionRule).filter(
-            models.StylePositionRule.id == rule_id
+    # 步骤2: 查询所有启用的位置
+    all_positions = db.query(models.Position).filter(
+        models.Position.is_active == True
+    ).order_by(models.Position.id).all()
+
+    # 步骤3: 对每个位置调用 available-prints 逻辑
+    available_positions = []
+
+    for position in all_positions:
+        position_id = position.id
+
+        # 复用 available-prints 的逻辑
+        # 检查位置限定（类型2）
+        position_restriction = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 2,
+            models.StylePositionRule.position_id == position_id,
+            models.StylePositionRule.is_active == True
         ).first()
-        if not existing_rule:
-            raise HTTPException(status_code=404, detail="规则不存在")
 
-        # 确定规则类型（如果更新中没有提供，使用现有的）
-        rule_type = existing_rule.rule_type
+        if position_restriction:
+            # 检查款式是否在白名单中
+            style_ids_list = position_restriction.style_ids.split(',') if position_restriction.style_ids else None
 
-        # 类型1和类型3：必须且只能有一个款式
-        if rule_type in [1, 3]:
-            if data.style_codes is not None:
-                if not data.style_codes or len(data.style_codes) != 1:
-                    type_name = "款式全禁" if rule_type == 1 else "款式位置限定"
-                    raise HTTPException(400, f"{type_name}规则必须且只能选择一个款式")
+            if style_ids_list is not None:
+                if str(style_id) not in [s.strip() for s in style_ids_list]:
+                    # 款式不在白名单，跳过该位置
+                    continue
 
-        # 类型2：style_codes和print_codes不能同时为空
-        if rule_type == 2:
-            # 确定更新后的值
-            final_style_codes = data.style_codes if data.style_codes is not None else (
-                existing_rule.style_ids.split(',') if existing_rule.style_ids else []
-            )
-            final_print_codes = data.print_codes if data.print_codes is not None else (
-                existing_rule.print_ids.split(',') if existing_rule.print_ids else []
-            )
+            # 款式通过，获取允许的印花
+            print_ids_list = position_restriction.print_ids.split(',') if position_restriction.print_ids else None
 
-            if not final_style_codes and not final_print_codes:
-                raise HTTPException(400, "位置限定规则的允许款式和允许印花不能同时为空")
+            if print_ids_list is None:
+                # 不限印花
+                all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+                print_ids = [p.id for p in all_prints]
+                print_codes = [p.code for p in all_prints]
+            else:
+                print_ids = [int(pid.strip()) for pid in print_ids_list]
+                prints = db.query(models.Print).filter(
+                    models.Print.id.in_(print_ids),
+                    models.Print.is_active == True
+                ).order_by(models.Print.id).all()
+                print_ids = [p.id for p in prints]
+                print_codes = [p.code for p in prints]
 
-        obj = crud.update_style_position_rule(db, rule_id, data)
-        if not obj:
-            raise HTTPException(status_code=404, detail="规则不存在")
-        return {"id": obj.id, "message": "更新成功"}
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+            available_positions.append(schemas.AvailablePositionWithPrints(
+                position_id=position.id,
+                position_name=position.name,
+                position_code=position.code,
+                print_ids=print_ids,
+                print_codes=print_codes,
+                is_restricted=print_ids_list is not None,
+                reason=f"位置 {position_id} 限定了允许的印花列表" if print_ids_list else "位置限定不限印花"
+            ))
+            continue
 
+        # 检查款式位置限定（类型3，黑名单策略）
+        style_position_rules = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 3,
+            text(f"FIND_IN_SET({style_id}, style_ids) > 0"),
+            models.StylePositionRule.is_active == True
+        ).all()
 
-@router.delete("/{rule_id}")
-def delete_rule(rule_id: int, db: Session = Depends(get_db)):
-    obj = crud.delete_style_position_rule(db, rule_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="规则不存在")
-    return {"message": "删除成功"}
+        if style_position_rules:
+            # 款式有类型3规则，检查该位置是否在白名单中
+            style_position_for_this_pos = None
+            for rule in style_position_rules:
+                if rule.position_id == position_id:
+                    style_position_for_this_pos = rule
+                    break
+
+            if style_position_for_this_pos is None:
+                # 该位置不在款式的白名单中（黑名单策略），跳过
+                continue
+
+            # 该位置在白名单中，获取允许的印花
+            print_ids_list = style_position_for_this_pos.print_ids.split(',') if style_position_for_this_pos.print_ids else None
+
+            if print_ids_list is None:
+                # 不限印花
+                all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+                print_ids = [p.id for p in all_prints]
+                print_codes = [p.code for p in all_prints]
+            else:
+                print_ids = [int(pid.strip()) for pid in print_ids_list]
+                prints = db.query(models.Print).filter(
+                    models.Print.id.in_(print_ids),
+                    models.Print.is_active == True
+                ).order_by(models.Print.id).all()
+                print_ids = [p.id for p in prints]
+                print_codes = [p.code for p in prints]
+
+            available_positions.append(schemas.AvailablePositionWithPrints(
+                position_id=position.id,
+                position_name=position.name,
+                position_code=position.code,
+                print_ids=print_ids,
+                print_codes=print_codes,
+                is_restricted=print_ids_list is not None,
+                reason=f"款式 {style_id} 在位置 {position_id} 限定了允许的印花列表" if print_ids_list else "款式位置限定不限印花"
+            ))
+            continue
+
+        # 款式无类型3规则，默认返回所有印花
+        all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+        print_ids = [p.id for p in all_prints]
+        print_codes = [p.code for p in all_prints]
+
+        available_positions.append(schemas.AvailablePositionWithPrints(
+            position_id=position.id,
+            position_name=position.name,
+            position_code=position.code,
+            print_ids=print_ids,
+            print_codes=print_codes,
+            is_restricted=False,
+            reason="无限定规则，所有印花可用"
+        ))
+
+    return schemas.AvailableByStyleResponse(
+        style_id=style_id,
+        is_banned=False,
+        available_positions=available_positions
+    )
 
 
 @router.get("/available-prints")
@@ -414,6 +583,119 @@ def get_available_positions(
         "is_restricted": is_restricted,
         "reason": "根据限定规则过滤" if is_restricted else "无限定规则，所有位置可用"
     }
+
+
+@router.get("/{rule_id}")
+def get_rule(rule_id: int, db: Session = Depends(get_db)):
+    from .. import models
+
+    obj = crud.get_style_position_rule(db, rule_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="规则不存在")
+
+    # 转换 ID 为 code 用于显示
+    prints_display = None
+    if obj.print_ids:
+        print_ids = [int(pid.strip()) for pid in obj.print_ids.split(',') if pid.strip()]
+        prints = db.query(models.Print).filter(models.Print.id.in_(print_ids)).all()
+        prints_display = ', '.join([p.code for p in prints])
+
+    styles_display = None
+    if obj.style_ids:
+        style_ids = [int(sid.strip()) for sid in obj.style_ids.split(',') if sid.strip()]
+        styles = db.query(models.Style).filter(models.Style.id.in_(style_ids)).all()
+        styles_display = ', '.join([s.code for s in styles])
+
+    return {
+        "id": obj.id,
+        "rule_type": obj.rule_type,
+        "position_id": obj.position_id,
+        "style_ids": obj.style_ids,
+        "print_ids": obj.print_ids,
+        "print_ids_display": prints_display,
+        "style_ids_display": styles_display,
+        "is_active": obj.is_active,
+        "created_at": obj.created_at,
+        "updated_at": obj.updated_at,
+        "position": schemas.PositionOut.model_validate(obj.position) if obj.position else None,
+    }
+
+
+@router.post("/", status_code=201)
+def create_rule(data: schemas.StylePositionRuleCreate, db: Session = Depends(get_db)):
+    try:
+        # 根据规则类型验证必填字段
+        if data.rule_type == 3:  # style_position
+            if not data.style_codes or not data.position_code:
+                raise HTTPException(400, "款式位置规则需要 style_codes 和 position_code")
+            if len(data.style_codes) != 1:
+                raise HTTPException(400, "款式位置规则只能指定一个款式")
+        elif data.rule_type == 2:  # position_restriction
+            if not data.position_code:
+                raise HTTPException(400, "位置限定规则需要 position_code")
+            if not data.style_codes and not data.print_codes:
+                raise HTTPException(400, "位置限定规则的 style_codes 和 print_codes 不能同时为空")
+        elif data.rule_type == 1:  # style_ban
+            if not data.style_codes:
+                raise HTTPException(400, "款式全禁规则需要 style_codes")
+            if len(data.style_codes) != 1:
+                raise HTTPException(400, "款式全禁规则只能指定一个款式")
+        else:
+            raise HTTPException(400, f"未知的规则类型: {data.rule_type}")
+
+        obj = crud.create_style_position_rule(db, data)
+        return {"id": obj.id, "message": "创建成功"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.put("/{rule_id}")
+def update_rule(rule_id: int, data: schemas.StylePositionRuleUpdate, db: Session = Depends(get_db)):
+    try:
+        # 获取现有规则
+        existing_rule = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.id == rule_id
+        ).first()
+        if not existing_rule:
+            raise HTTPException(status_code=404, detail="规则不存在")
+
+        # 确定规则类型（如果更新中没有提供，使用现有的）
+        rule_type = existing_rule.rule_type
+
+        # 类型1和类型3：必须且只能有一个款式
+        if rule_type in [1, 3]:
+            if data.style_codes is not None:
+                if not data.style_codes or len(data.style_codes) != 1:
+                    type_name = "款式全禁" if rule_type == 1 else "款式位置限定"
+                    raise HTTPException(400, f"{type_name}规则必须且只能选择一个款式")
+
+        # 类型2：style_codes和print_codes不能同时为空
+        if rule_type == 2:
+            # 确定更新后的值
+            final_style_codes = data.style_codes if data.style_codes is not None else (
+                existing_rule.style_ids.split(',') if existing_rule.style_ids else []
+            )
+            final_print_codes = data.print_codes if data.print_codes is not None else (
+                existing_rule.print_ids.split(',') if existing_rule.print_ids else []
+            )
+
+            if not final_style_codes and not final_print_codes:
+                raise HTTPException(400, "位置限定规则的允许款式和允许印花不能同时为空")
+
+        obj = crud.update_style_position_rule(db, rule_id, data)
+        if not obj:
+            raise HTTPException(status_code=404, detail="规则不存在")
+        return {"id": obj.id, "message": "更新成功"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/{rule_id}")
+def delete_rule(rule_id: int, db: Session = Depends(get_db)):
+    obj = crud.delete_style_position_rule(db, rule_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return {"message": "删除成功"}
 
 
 # ── 全禁款式（StyleBan）───────────────────────────────────

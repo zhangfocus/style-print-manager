@@ -231,6 +231,40 @@ class StyleBanOut(StyleBanBase):
         from_attributes = True
 
 
+# ───── Restriction Query Schemas ─────
+class RestrictionCheckRequest(BaseModel):
+    """校验款式+位置+印花组合"""
+    style_id: int = Field(..., description="款式ID")
+    position_id: int = Field(..., description="位置ID")
+    print_id: int = Field(..., description="印花ID")
+
+
+class RestrictionCheckResponse(BaseModel):
+    """校验结果"""
+    allowed: bool = Field(..., description="是否允许")
+    reason: str = Field(..., description="拒绝原因或允许原因")
+    rule_type: Optional[str] = Field(None, description="触发的规则类型: style_ban, position_restriction, style_position")
+    rule_id: Optional[int] = Field(None, description="触发的规则ID")
+
+
+class AvailablePositionWithPrints(BaseModel):
+    """位置及其可用印花"""
+    position_id: int
+    position_name: str
+    position_code: str
+    print_ids: list[int] = Field(default_factory=list, description="可用印花ID列表")
+    print_codes: list[str] = Field(default_factory=list, description="可用印花编码列表")
+    is_restricted: bool = Field(..., description="是否受限定规则约束")
+    reason: str = Field(..., description="限定原因说明")
+
+
+class AvailableByStyleResponse(BaseModel):
+    """款式查询结果"""
+    style_id: int
+    is_banned: bool = Field(..., description="款式是否被全禁")
+    available_positions: list[AvailablePositionWithPrints] = Field(default_factory=list)
+
+
 # ───── Excel Import Result ─────
 class ImportResult(BaseModel):
     success: bool
