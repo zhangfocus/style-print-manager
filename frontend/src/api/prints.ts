@@ -12,3 +12,6 @@ export const updatePrint = (id: number, data: Partial<Print>) =>
 
 export const deletePrint = (id: number) =>
   client.delete(`/prints/${id}`)
+
+export const getPrintsByIds = (ids: number[]) =>
+  client.get<Print[]>('/prints/by-ids', { params: { ids: ids.join(',') } }).then(r => r.data)

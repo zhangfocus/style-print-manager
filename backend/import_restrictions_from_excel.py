@@ -1,9 +1,9 @@
 """
 从特殊款式限定位置表导入限定规则
 支持三种规则类型：
-1. 类型1 (style_position): 款式+位置 -> 印花白名单（可为空表示不限）
+1. 类型3 (style_position): 款式+位置 -> 印花白名单（可为空表示不限）
 2. 类型2 (position_restriction): 位置 -> 印花白名单+款式白名单
-3. 类型3 (style_ban): 款式全禁
+3. 类型1 (style_ban): 款式全禁
 """
 import pandas as pd
 import os
@@ -109,10 +109,10 @@ def import_from_excel(excel_path):
                     # 必须同时有允许印花和允许款式
                     if print_ids and style_ids:
                         rule = models.StylePositionRule(
-                            rule_type='position_restriction',
+                            rule_type=2,  # position_restriction
                             position_id=position_id,
-                            allowed_print_ids=','.join(print_ids),
-                            allowed_style_ids=','.join(style_ids),
+                            print_ids=','.join(print_ids),
+                            style_ids=','.join(style_ids),
                             is_active=True
                         )
                         db.add(rule)
@@ -129,8 +129,8 @@ def import_from_excel(excel_path):
                         continue
 
                     rule = models.StylePositionRule(
-                        rule_type='style_ban',
-                        style_id=style_id,
+                        rule_type=1,  # style_ban
+                        style_ids=str(style_id),
                         is_active=True
                     )
                     db.add(rule)
@@ -151,7 +151,7 @@ def import_from_excel(excel_path):
                         continue
 
                     # 转换印花编码为ID（可为空）
-                    allowed_print_ids = None
+                    print_ids_str = None
                     if print_codes_str:
                         print_codes = [c.strip() for c in print_codes_str.split(',') if c.strip()]
                         print_ids = []
@@ -162,13 +162,13 @@ def import_from_excel(excel_path):
                             else:
                                 stats['errors'].append(f"行{idx+2}: 印花 {code} 不存在")
                         if print_ids:
-                            allowed_print_ids = ','.join(print_ids)
+                            print_ids_str = ','.join(print_ids)
 
                     rule = models.StylePositionRule(
-                        rule_type='style_position',
-                        style_id=style_id,
+                        rule_type=3,  # style_position
+                        style_ids=str(style_id),
                         position_id=position_id,
-                        allowed_print_ids=allowed_print_ids,
+                        print_ids=print_ids_str,
                         is_active=True
                     )
                     db.add(rule)
@@ -185,9 +185,9 @@ def import_from_excel(excel_path):
 
         # 打印统计
         print("\n导入完成!")
-        print(f"类型1 (款式+位置): {stats['style_position']} 条")
+        print(f"类型3 (款式+位置): {stats['style_position']} 条")
         print(f"类型2 (位置限定): {stats['position_restriction']} 条")
-        print(f"类型3 (款式全禁): {stats['style_ban']} 条")
+        print(f"类型1 (款式全禁): {stats['style_ban']} 条")
         print(f"跳过: {stats['skipped']} 条")
 
         if stats['errors']:

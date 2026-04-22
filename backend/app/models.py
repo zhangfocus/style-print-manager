@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Float, Text, UniqueConstraint, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Float, Text, UniqueConstraint, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -89,31 +89,36 @@ class StylePositionRule(Base):
     """
     统一限定规则表
     支持三种规则类型：
-    1. style_position: 款式+位置 → 印花白名单（可为空表示不限）
-    2. position_restriction: 位置 → 印花白名单+款式白名单
-    3. style_ban: 款式全禁
+    1. style_ban (1): 款式全禁 - style_ids有值，position_id和print_ids为NULL
+    2. position_restriction (2): 位置限定 - position_id有值，style_ids和print_ids有值
+    3. style_position (3): 款式位置限定 - position_id有值，style_ids有值，print_ids有值或NULL
     """
     __tablename__ = "style_position_rules"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # 规则类型
-    rule_type = Column(String(32), nullable=False, index=True, comment="规则类型: style_position|position_restriction|style_ban")
+    # 规则类型：3=style_position, 2=position_restriction, 1=style_ban
+    rule_type = Column(Integer, nullable=False, index=True, comment="规则类型: 3=style_position, 2=position_restriction, 1=style_ban")
 
-    # 三个维度的键（根据 rule_type 填充对应字段）
-    style_id = Column(Integer, ForeignKey("styles.id", ondelete="CASCADE"), nullable=True, index=True)
-    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=True, index=True)
-    print_id = Column(Integer, ForeignKey("prints.id", ondelete="CASCADE"), nullable=True, index=True, comment="印花ID")
+    # 位置ID（外键，级联删除）
+    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=True, index=True, comment="位置ID")
 
-    # 两种约束目标（根据 rule_type 填充对应字段）
-    allowed_print_ids = Column(Text, nullable=True, comment="允许印花ID(逗号分隔)，NULL=不限")
-    allowed_style_ids = Column(Text, nullable=True, comment="允许款式ID(逗号分隔)")
+    # 款式ID列表（逗号分隔的ID字符串）
+    style_ids = Column(Text, nullable=True, comment="款式ID(逗号分隔)，如'1,2,3'")
+
+    # 印花ID列表（逗号分隔的ID字符串）
+    print_ids = Column(Text, nullable=True, comment="印花ID(逗号分隔)，如'10,20,30'")
 
     is_active = Column(Boolean, default=True, comment="是否启用")
-    remark = Column(Text, nullable=True, comment="备注")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
-    style = relationship("Style")
+    # 关系
     position = relationship("Position")
-    print_obj = relationship("Print")
+
+    # 唯一性约束和索引
+    __table_args__ = (
+        UniqueConstraint('rule_type', 'position_id', 'style_ids', 'print_ids',
+                        name='uq_rule_position_styles_prints'),
+        Index('idx_rule_type_position', 'rule_type', 'position_id'),
+    )

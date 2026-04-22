@@ -9,11 +9,11 @@ import type { StylePositionRule, Style, Position, Print } from '../types'
 import {
   listRules, createRule, updateRule, deleteRule,
 } from '../api/restrictions'
-import { listStyles } from '../api/styles'
+import { listStyles, getStylesByIds } from '../api/styles'
 import { listPositions } from '../api/positions'
-import { listPrints } from '../api/prints'
+import { listPrints, getPrintsByIds } from '../api/prints'
 
-type RuleType = 'style_position' | 'position_restriction' | 'style_ban'
+type RuleType = 1 | 2 | 3  // 1=style_ban, 2=position_restriction, 3=style_position
 
 export default function RestrictionsPage() {
   const [rules, setRules] = useState<StylePositionRule[]>([])
@@ -29,7 +29,7 @@ export default function RestrictionsPage() {
   const [positionSearching, setPositionSearching] = useState(false)
   const [printSearching, setPrintSearching] = useState(false)
 
-  const [activeTab, setActiveTab] = useState<RuleType>('style_position')
+  const [activeTab, setActiveTab] = useState<RuleType>(3)
   const [filterStyleId, setFilterStyleId] = useState<number | undefined>()
   const [filterPositionId, setFilterPositionId] = useState<number | undefined>()
   const [filterPrintId, setFilterPrintId] = useState<number | undefined>()
@@ -38,7 +38,7 @@ export default function RestrictionsPage() {
   const [editingRule, setEditingRule] = useState<StylePositionRule | null>(null)
   const [ruleForm] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
-  const [selectedRuleType, setSelectedRuleType] = useState<RuleType>('style_position')
+  const [selectedRuleType, setSelectedRuleType] = useState<RuleType>(3)
   const [viewModalOpen, setViewModalOpen] = useState(false)
   const [viewModalTitle, setViewModalTitle] = useState('')
   const [viewModalItems, setViewModalItems] = useState<string[]>([])
@@ -49,10 +49,13 @@ export default function RestrictionsPage() {
   const load = async () => {
     setLoading(true)
     try {
+      const style_code = filterStyleId ? styles.find(s => s.id === filterStyleId)?.code : undefined
+      const print_code = filterPrintId ? prints.find(p => p.id === filterPrintId)?.code : undefined
+
       const res = await listRules({
-        style_id: filterStyleId,
+        style_code,
         position_id: filterPositionId,
-        print_id: filterPrintId,
+        print_code,
         rule_type: activeTab,
         page,
         page_size: pageSize
@@ -139,7 +142,7 @@ export default function RestrictionsPage() {
     label: s.code,
   }))
   const positionOptions = positions.map(p => ({ value: p.id, label: p.name }))
-  const printOptions = prints.map(p => ({ value: p.id, label: `${p.code} - ${p.name}` }))
+  const printOptions = prints.map(p => ({ value: p.id, label: p.code }))
 
   const openCreateRule = () => {
     setEditingRule(null)
@@ -170,18 +173,45 @@ export default function RestrictionsPage() {
     viewModalPage * viewModalPageSize
   )
 
-  const openEditRule = (r: StylePositionRule) => {
+  const openEditRule = async (r: StylePositionRule) => {
     setEditingRule(r)
     setSelectedRuleType(r.rule_type)
+
+    // 解析ID列表
+    const styleIds = r.style_ids ? r.style_ids.split(',').map(id => parseInt(id.trim())) : []
+    const printIds = r.print_ids ? r.print_ids.split(',').map(id => parseInt(id.trim())) : []
+
+    // 批量加载款式和印花数据
+    try {
+      if (styleIds.length > 0) {
+        const loadedStyles = await getStylesByIds(styleIds)
+        // 合并到现有的styles列表中，避免重复
+        setStyles(prev => {
+          const existingIds = new Set(prev.map(s => s.id))
+          const newStyles = loadedStyles.filter(s => !existingIds.has(s.id))
+          return [...prev, ...newStyles]
+        })
+      }
+
+      if (printIds.length > 0) {
+        const loadedPrints = await getPrintsByIds(printIds)
+        // 合并到现有的prints列表中，避免重复
+        setPrints(prev => {
+          const existingIds = new Set(prev.map(p => p.id))
+          const newPrints = loadedPrints.filter(p => !existingIds.has(p.id))
+          return [...prev, ...newPrints]
+        })
+      }
+    } catch (e: unknown) {
+      message.error((e as Error).message)
+    }
+
     ruleForm.setFieldsValue({
       rule_type: r.rule_type,
-      style_id: r.style_id,
       position_id: r.position_id,
-      print_id: r.print_id,
-      allowed_print_ids: r.allowed_print_ids ? r.allowed_print_ids.split(',').map(id => parseInt(id.trim())) : [],
-      allowed_style_ids: r.allowed_style_ids ? r.allowed_style_ids.split(',').map(id => parseInt(id.trim())) : [],
+      style_ids: styleIds,
+      print_ids: printIds,
       is_active: r.is_active,
-      remark: r.remark,
     })
     setRuleModalOpen(true)
   }
@@ -202,23 +232,35 @@ export default function RestrictionsPage() {
       const payload: any = {
         rule_type: values.rule_type,
         is_active: values.is_active,
-        remark: values.remark,
       }
 
-      if (values.rule_type === 'style_position') {
-        payload.style_id = values.style_id
-        payload.position_id = values.position_id
-        payload.allowed_print_ids = Array.isArray(values.allowed_print_ids)
-          ? values.allowed_print_ids.join(',')
+      // 转换 ID 为 code
+      if (values.rule_type === 3) {  // style_position
+        const position = positions.find(p => p.id === values.position_id)
+        payload.position_code = position?.code || null
+
+        payload.style_codes = Array.isArray(values.style_ids)
+          ? values.style_ids.map((id: number) => styles.find(s => s.id === id)?.code).filter(Boolean)
           : null
-      } else if (values.rule_type === 'position_restriction') {
-        payload.position_id = values.position_id
-        payload.print_id = values.print_id
-        payload.allowed_style_ids = Array.isArray(values.allowed_style_ids)
-          ? values.allowed_style_ids.join(',')
+
+        payload.print_codes = Array.isArray(values.print_ids)
+          ? values.print_ids.map((id: number) => prints.find(p => p.id === id)?.code).filter(Boolean)
           : null
-      } else if (values.rule_type === 'style_ban') {
-        payload.style_id = values.style_id
+      } else if (values.rule_type === 2) {  // position_restriction
+        const position = positions.find(p => p.id === values.position_id)
+        payload.position_code = position?.code || null
+
+        payload.style_codes = Array.isArray(values.style_ids)
+          ? values.style_ids.map((id: number) => styles.find(s => s.id === id)?.code).filter(Boolean)
+          : null
+
+        payload.print_codes = Array.isArray(values.print_ids)
+          ? values.print_ids.map((id: number) => prints.find(p => p.id === id)?.code).filter(Boolean)
+          : null
+      } else if (values.rule_type === 1) {  // style_ban
+        payload.style_codes = Array.isArray(values.style_ids)
+          ? values.style_ids.map((id: number) => styles.find(s => s.id === id)?.code).filter(Boolean)
+          : null
       }
 
       if (editingRule) {
@@ -237,126 +279,127 @@ export default function RestrictionsPage() {
     }
   }
 
-  const columns: ColumnsType<StylePositionRule> = [
-    {
-      title: '规则类型', width: 120, fixed: 'left',
-      render: (_, r) => {
-        const typeMap: Record<string, { label: string; color: string }> = {
-          style_position: { label: '款式位置', color: 'blue' },
-          position_restriction: { label: '位置限定', color: 'green' },
-          style_ban: { label: '款式全禁', color: 'red' },
-        }
-        const t = typeMap[r.rule_type] || { label: r.rule_type, color: 'default' }
-        return <Tag color={t.color}>{t.label}</Tag>
-      },
-    },
-    {
-      title: '款式', width: 180, ellipsis: true,
-      render: (_, r) => {
-        if (!r.style_id) return '—'
-        return r.style?.code ?? r.style_id
-      },
-    },
-    {
-      title: '位置', width: 110,
-      render: (_, r) => {
-        if (!r.position_id) return '—'
-        return r.position?.name ?? r.position_id
-      },
-    },
-    {
-      title: '印花', width: 200,
-      render: (_, r) => {
-        // 款式位置规则显示限定的印花
-        if (r.rule_type === 'style_position') {
-          if (!r.allowed_print_ids_display) return <Tag color="blue">不限</Tag>
-          const count = r.allowed_print_ids_display.split(',').length
+  // 根据规则类型动态生成列定义
+  const getColumns = (): ColumnsType<StylePositionRule> => {
+    const baseColumns: ColumnsType<StylePositionRule> = []
+
+    // 款式列
+    if (activeTab === 3 || activeTab === 1) {
+      baseColumns.push({
+        title: '款式', width: 180, ellipsis: true,
+        render: (_, r) => {
+          if (!r.style_ids_display) return '—'
+          return r.style_ids_display
+        },
+      })
+    }
+
+    // 位置列
+    if (activeTab === 3 || activeTab === 2) {
+      baseColumns.push({
+        title: '位置', width: 110,
+        render: (_, r) => {
+          if (!r.position_id) return '—'
+          return r.position?.name ?? r.position_id
+        },
+      })
+    }
+
+    // 印花列（款式位置规则）
+    if (activeTab === 3) {
+      baseColumns.push({
+        title: '印花', width: 200,
+        render: (_, r) => {
+          if (!r.print_ids_display) return <Tag color="blue">不限</Tag>
+          const count = r.print_ids_display.split(',').length
           return (
             <Space>
               <span>共 {count} 个</span>
               <Button
                 type="link"
                 size="small"
-                onClick={() => openViewModal('印花列表', r.allowed_print_ids_display || '')}
+                onClick={() => openViewModal('印花列表', r.print_ids_display || '')}
               >
                 查看
               </Button>
             </Space>
           )
-        }
-        return '—'
-      },
-    },
-    {
-      title: '允许印花', width: 200,
-      render: (_, r) => {
-        // 位置限定规则显示允许的印花
-        if (r.rule_type === 'position_restriction') {
-          if (!r.allowed_print_ids_display) return <Tag color="blue">不限</Tag>
-          const count = r.allowed_print_ids_display.split(',').length
+        },
+      })
+    }
+
+    // 允许印花列（位置限定规则）
+    if (activeTab === 2) {
+      baseColumns.push({
+        title: '允许印花', width: 200,
+        render: (_, r) => {
+          if (!r.print_ids_display) return <Tag color="blue">不限</Tag>
+          const count = r.print_ids_display.split(',').length
           return (
             <Space>
               <span>共 {count} 个</span>
               <Button
                 type="link"
                 size="small"
-                onClick={() => openViewModal('允许印花列表', r.allowed_print_ids_display || '')}
+                onClick={() => openViewModal('允许印花列表', r.print_ids_display || '')}
               >
                 查看
               </Button>
             </Space>
           )
-        }
-        return '—'
-      },
-    },
-    {
-      title: '允许款式', width: 200,
-      render: (_, r) => {
-        // 位置限定规则显示允许的款式
-        if (r.rule_type === 'position_restriction') {
-          if (!r.allowed_style_ids_display) return <Tag color="blue">不限</Tag>
-          const count = r.allowed_style_ids_display.split(',').length
+        },
+      })
+    }
+
+    // 允许款式列（位置限定规则）
+    if (activeTab === 2) {
+      baseColumns.push({
+        title: '允许款式', width: 200,
+        render: (_, r) => {
+          if (!r.style_ids_display) return <Tag color="blue">不限</Tag>
+          const count = r.style_ids_display.split(',').length
           return (
             <Space>
               <span>共 {count} 个</span>
               <Button
                 type="link"
                 size="small"
-                onClick={() => openViewModal('允许款式列表', r.allowed_style_ids_display || '')}
+                onClick={() => openViewModal('允许款式列表', r.style_ids_display || '')}
               >
                 查看
               </Button>
             </Space>
           )
-        }
-        return '—'
-      },
-    },
-    {
+        },
+      })
+    }
+
+    // 状态列
+    baseColumns.push({
       title: '状态', width: 80,
       render: (_, r) => (
         <Tag color={r.is_active ? 'green' : 'default'}>
           {r.is_active ? '启用' : '禁用'}
         </Tag>
       ),
-    },
-    {
-      title: '备注', width: 150, ellipsis: true,
-      dataIndex: 'remark',
-      render: (v) => v || '—',
-    },
-    {
+    })
+
+    // 创建时间
+    baseColumns.push({
       title: '创建时间', width: 160,
       dataIndex: 'created_at',
       render: (v) => v ? new Date(v).toLocaleString('zh-CN') : '—',
-    },
-    {
+    })
+
+    // 更新时间
+    baseColumns.push({
       title: '更新时间', width: 160,
       dataIndex: 'updated_at',
       render: (v) => v ? new Date(v).toLocaleString('zh-CN') : '—',
-    },
-    {
+    })
+
+    // 操作列
+    baseColumns.push({
       title: '操作', width: 120, fixed: 'right',
       render: (_, r) => (
         <Space size="small">
@@ -380,11 +423,13 @@ export default function RestrictionsPage() {
           </Popconfirm>
         </Space>
       ),
-    },
-  ]
+    })
+
+    return baseColumns
+  }
 
   const renderFilters = () => {
-    if (activeTab === 'style_ban') {
+    if (activeTab === 1) {  // style_ban
       return (
         <Select
           showSearch
@@ -426,7 +471,7 @@ export default function RestrictionsPage() {
           onSearch={searchPositions}
           filterOption={false}
         />
-        {activeTab === 'position_restriction' && (
+        {activeTab === 2 && (  // position_restriction
           <Select
             showSearch
             placeholder="筛选印花"
@@ -448,9 +493,9 @@ export default function RestrictionsPage() {
     <div style={{ padding: 24 }}>
       <Card title="限定规则管理">
         <Tabs
-          activeKey={activeTab}
+          activeKey={String(activeTab)}
           onChange={(key) => {
-            setActiveTab(key as RuleType)
+            setActiveTab(Number(key) as RuleType)
             setFilterStyleId(undefined)
             setFilterPositionId(undefined)
             setFilterPrintId(undefined)
@@ -462,7 +507,7 @@ export default function RestrictionsPage() {
           }
           items={[
             {
-              key: 'style_position',
+              key: '3',
               label: '款式位置规则',
               children: (
                 <>
@@ -470,7 +515,7 @@ export default function RestrictionsPage() {
                     {renderFilters()}
                   </Space>
                   <Table
-                    columns={columns}
+                    columns={getColumns()}
                     dataSource={rules}
                     rowKey="id"
                     loading={loading}
@@ -492,7 +537,7 @@ export default function RestrictionsPage() {
               ),
             },
             {
-              key: 'position_restriction',
+              key: '2',
               label: '位置限定规则',
               children: (
                 <>
@@ -500,7 +545,7 @@ export default function RestrictionsPage() {
                     {renderFilters()}
                   </Space>
                   <Table
-                    columns={columns}
+                    columns={getColumns()}
                     dataSource={rules}
                     rowKey="id"
                     loading={loading}
@@ -522,7 +567,7 @@ export default function RestrictionsPage() {
               ),
             },
             {
-              key: 'style_ban',
+              key: '1',
               label: '款式全禁规则',
               children: (
                 <>
@@ -530,7 +575,7 @@ export default function RestrictionsPage() {
                     {renderFilters()}
                   </Space>
                   <Table
-                    columns={columns}
+                    columns={getColumns()}
                     dataSource={rules}
                     rowKey="id"
                     loading={loading}
@@ -578,20 +623,21 @@ export default function RestrictionsPage() {
               disabled={!!editingRule}
               onChange={(v) => setSelectedRuleType(v)}
               options={[
-                { value: 'style_position', label: '款式位置 - 限定某款式+位置允许的印花' },
-                { value: 'position_restriction', label: '位置限定 - 限定某位置+印花允许的款式' },
-                { value: 'style_ban', label: '款式全禁 - 禁止某款式使用任何印花' },
+                { value: 3, label: '款式位置 - 限定某款式+位置允许的印花' },
+                { value: 2, label: '位置限定 - 限定某位置允许的印花和款式' },
+                { value: 1, label: '款式全禁 - 禁止某款式使用任何印花' },
               ]}
             />
           </Form.Item>
 
-          {(selectedRuleType === 'style_position' || selectedRuleType === 'style_ban') && (
+          {(selectedRuleType === 3 || selectedRuleType === 1) && (
             <Form.Item
               label="款式"
-              name="style_id"
+              name="style_ids"
               rules={[{ required: true, message: '请选择款式' }]}
             >
               <Select
+                mode="multiple"
                 showSearch
                 placeholder="选择款式"
                 options={styleOptions}
@@ -602,7 +648,7 @@ export default function RestrictionsPage() {
             </Form.Item>
           )}
 
-          {(selectedRuleType === 'style_position' || selectedRuleType === 'position_restriction') && (
+          {(selectedRuleType === 3 || selectedRuleType === 2) && (
             <Form.Item
               label="位置"
               name="position_id"
@@ -619,27 +665,10 @@ export default function RestrictionsPage() {
             </Form.Item>
           )}
 
-          {selectedRuleType === 'position_restriction' && (
-            <Form.Item
-              label="印花"
-              name="print_id"
-              rules={[{ required: true, message: '请选择印花' }]}
-            >
-              <Select
-                showSearch
-                placeholder="选择印花"
-                options={printOptions}
-                loading={printSearching}
-                onSearch={searchPrints}
-                filterOption={false}
-              />
-            </Form.Item>
-          )}
-
-          {selectedRuleType === 'style_position' && (
+          {selectedRuleType === 3 && (
             <Form.Item
               label="允许的印花"
-              name="allowed_print_ids"
+              name="print_ids"
               tooltip="留空表示不限"
             >
               <Select
@@ -654,30 +683,43 @@ export default function RestrictionsPage() {
             </Form.Item>
           )}
 
-          {selectedRuleType === 'position_restriction' && (
-            <Form.Item
-              label="允许的款式"
-              name="allowed_style_ids"
-              tooltip="留空表示不限"
-            >
-              <Select
-                mode="multiple"
-                showSearch
-                placeholder="选择允许的款式（留空=不限）"
-                options={styleOptions}
-                loading={styleSearching}
-                onSearch={searchStyles}
-                filterOption={false}
-              />
-            </Form.Item>
+          {selectedRuleType === 2 && (
+            <>
+              <Form.Item
+                label="允许的印花"
+                name="print_ids"
+                tooltip="留空表示不限"
+              >
+                <Select
+                  mode="multiple"
+                  showSearch
+                  placeholder="选择允许的印花（留空=不限）"
+                  options={printOptions}
+                  loading={printSearching}
+                  onSearch={searchPrints}
+                  filterOption={false}
+                />
+              </Form.Item>
+              <Form.Item
+                label="允许的款式"
+                name="style_ids"
+                tooltip="留空表示不限"
+              >
+                <Select
+                  mode="multiple"
+                  showSearch
+                  placeholder="选择允许的款式（留空=不限）"
+                  options={styleOptions}
+                  loading={styleSearching}
+                  onSearch={searchStyles}
+                  filterOption={false}
+                />
+              </Form.Item>
+            </>
           )}
 
           <Form.Item label="状态" name="is_active" valuePropName="checked">
             <Switch checkedChildren="启用" unCheckedChildren="禁用" />
-          </Form.Item>
-
-          <Form.Item label="备注" name="remark">
-            <Input.TextArea rows={3} placeholder="可选" />
           </Form.Item>
         </Form>
       </Modal>

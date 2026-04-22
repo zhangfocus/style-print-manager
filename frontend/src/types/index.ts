@@ -72,19 +72,14 @@ export interface Position {
 
 export interface StylePositionRule {
   id: number
-  rule_type: 'style_position' | 'position_restriction' | 'style_ban'
-  style_id?: number
-  position_id?: number
-  print_id?: number
-  allowed_print_ids?: string | null  // 逗号分隔的允许印花ID
-  allowed_print_ids_display?: string | null  // 可读格式
-  allowed_style_ids?: string | null  // 逗号分隔的允许款式ID
-  allowed_style_ids_display?: string | null  // 可读格式
+  rule_type: 1 | 2 | 3  // 1=style_ban, 2=position_restriction, 3=style_position
+  position_id?: number | null
+  style_ids?: string | null  // 逗号分隔的款式ID
+  print_ids?: string | null  // 逗号分隔的印花ID
+  print_ids_display?: string | null  // 可读格式（印花编码）
+  style_ids_display?: string | null  // 可读格式（款式编码）
   is_active: boolean
-  remark?: string
-  style?: Style
   position?: Position
-  print_obj?: Print
   created_at?: string
   updated_at?: string
 }

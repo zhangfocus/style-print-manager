@@ -170,32 +170,36 @@ class PositionOut(PositionBase):
 
 # ───── StylePositionRule (统一限定规则) ─────
 class StylePositionRuleBase(BaseModel):
-    rule_type: str = Field(..., description="规则类型: style_position|position_restriction|style_ban")
-    style_id: Optional[int] = None
+    rule_type: int = Field(..., description="规则类型: 3=style_position, 2=position_restriction, 1=style_ban")
     position_id: Optional[int] = None
-    print_id: Optional[int] = None
-    allowed_print_ids: Optional[str] = Field(None, description="允许印花ID(逗号分隔)，null=不限")
-    allowed_style_ids: Optional[str] = Field(None, description="允许款式ID(逗号分隔)")
+    style_ids: Optional[str] = Field(None, description="款式ID(逗号分隔)")
+    print_ids: Optional[str] = Field(None, description="印花ID(逗号分隔)")
     is_active: bool = True
-    remark: Optional[str] = None
 
 
-class StylePositionRuleCreate(StylePositionRuleBase):
-    pass
+class StylePositionRuleCreate(BaseModel):
+    """创建规则时使用 code 而不是 id"""
+    rule_type: int = Field(..., description="规则类型: 3=style_position, 2=position_restriction, 1=style_ban")
+    position_code: Optional[str] = Field(None, description="位置编码")
+    style_codes: Optional[list[str]] = Field(None, description="款式编码列表")
+    print_codes: Optional[list[str]] = Field(None, description="印花编码列表")
+    is_active: bool = True
 
 
 class StylePositionRuleUpdate(BaseModel):
-    allowed_print_ids: Optional[str] = None
-    allowed_style_ids: Optional[str] = None
+    """更新规则时使用 code 而不是 id"""
+    position_code: Optional[str] = None
+    style_codes: Optional[list[str]] = None
+    print_codes: Optional[list[str]] = None
     is_active: Optional[bool] = None
-    remark: Optional[str] = None
 
 
 class StylePositionRuleOut(StylePositionRuleBase):
     id: int
-    style: Optional[StyleOut] = None
     position: Optional[PositionOut] = None
-    print_obj: Optional[PrintOut] = None
+    # 用于前端显示的字段
+    style_codes_display: Optional[str] = Field(None, description="款式编码(用于显示)")
+    print_codes_display: Optional[str] = Field(None, description="印花编码(用于显示)")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

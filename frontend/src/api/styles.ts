@@ -12,3 +12,6 @@ export const updateStyle = (id: number, data: Partial<Style>) =>
 
 export const deleteStyle = (id: number) =>
   client.delete(`/styles/${id}`)
+
+export const getStylesByIds = (ids: number[]) =>
+  client.get<Style[]>('/styles/by-ids', { params: { ids: ids.join(',') } }).then(r => r.data)

@@ -12,29 +12,31 @@ bans_router = APIRouter(prefix="/api/bans", tags=["全禁款式"])
 
 @router.get("/")
 def list_rules(
-    style_id: Optional[int] = Query(None),
+    style_code: Optional[str] = Query(None),
     position_id: Optional[int] = Query(None),
-    print_id: Optional[int] = Query(None),
-    rule_type: Optional[str] = Query(None),
+    print_code: Optional[str] = Query(None),
+    rule_type: Optional[int] = Query(None),
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
 ):
     from .. import models
 
-    result_data = crud.get_style_position_rules(db, page=page, page_size=page_size,
-                                         style_id=style_id, position_id=position_id,
-                                         print_id=print_id, rule_type=rule_type)
+    result_data = crud.get_style_position_rules(
+        db, page=page, page_size=page_size,
+        style_code=style_code, position_id=position_id,
+        print_code=print_code, rule_type=rule_type
+    )
     rules = result_data["items"]
 
     # 批量收集所有需要查询的 ID
     all_print_ids = set()
     all_style_ids = set()
     for rule in rules:
-        if rule.allowed_print_ids:
-            all_print_ids.update(int(pid.strip()) for pid in rule.allowed_print_ids.split(',') if pid.strip())
-        if rule.allowed_style_ids:
-            all_style_ids.update(int(sid.strip()) for sid in rule.allowed_style_ids.split(',') if sid.strip())
+        if rule.print_ids:
+            all_print_ids.update(int(pid.strip()) for pid in rule.print_ids.split(',') if pid.strip())
+        if rule.style_ids:
+            all_style_ids.update(int(sid.strip()) for sid in rule.style_ids.split(',') if sid.strip())
 
     # 批量查询
     prints_map = {}
@@ -51,15 +53,15 @@ def list_rules(
     result = []
     for rule in rules:
         prints_display = None
-        if rule.allowed_print_ids:
-            print_ids = [int(pid.strip()) for pid in rule.allowed_print_ids.split(',') if pid.strip()]
+        if rule.print_ids:
+            print_ids = [int(pid.strip()) for pid in rule.print_ids.split(',') if pid.strip()]
             print_names = [prints_map[pid] for pid in print_ids if pid in prints_map]
             if print_names:
                 prints_display = ', '.join(print_names)
 
         styles_display = None
-        if rule.allowed_style_ids:
-            style_ids = [int(sid.strip()) for sid in rule.allowed_style_ids.split(',') if sid.strip()]
+        if rule.style_ids:
+            style_ids = [int(sid.strip()) for sid in rule.style_ids.split(',') if sid.strip()]
             style_names = [styles_map[sid] for sid in style_ids if sid in styles_map]
             if style_names:
                 styles_display = ', '.join(style_names)
@@ -67,20 +69,15 @@ def list_rules(
         rule_dict = {
             "id": rule.id,
             "rule_type": rule.rule_type,
-            "style_id": rule.style_id,
             "position_id": rule.position_id,
-            "print_id": rule.print_id,
-            "allowed_print_ids": rule.allowed_print_ids,
-            "allowed_print_ids_display": prints_display,
-            "allowed_style_ids": rule.allowed_style_ids,
-            "allowed_style_ids_display": styles_display,
+            "style_ids": rule.style_ids,
+            "print_ids": rule.print_ids,
+            "print_ids_display": prints_display,
+            "style_ids_display": styles_display,
             "is_active": rule.is_active,
-            "remark": rule.remark,
             "created_at": rule.created_at,
             "updated_at": rule.updated_at,
-            "style": schemas.StyleOut.model_validate(rule.style) if rule.style else None,
             "position": schemas.PositionOut.model_validate(rule.position) if rule.position else None,
-            "print_obj": schemas.PrintOut.model_validate(rule.print_obj) if rule.print_obj else None,
         }
         result.append(rule_dict)
 
@@ -92,66 +89,73 @@ def list_rules(
     }
 
 
-@router.get("/query")
-def query_allowed_prints(
-    style_id: int = Query(...),
-    position_id: int = Query(...),
-    db: Session = Depends(get_db),
-):
-    """查询指定款式+位置允许的印花列表（三维度交集）"""
-    allowed = crud.query_allowed_prints(db, style_id, position_id)
-    return {"style_id": style_id, "position_id": position_id, "allowed_prints": allowed}
-
-
-@router.get("/{rule_id}", response_model=schemas.StylePositionRuleOut)
+@router.get("/{rule_id}")
 def get_rule(rule_id: int, db: Session = Depends(get_db)):
+    from .. import models
+
     obj = crud.get_style_position_rule(db, rule_id)
     if not obj:
         raise HTTPException(status_code=404, detail="规则不存在")
-    return obj
+
+    # 转换 ID 为 code 用于显示
+    prints_display = None
+    if obj.print_ids:
+        print_ids = [int(pid.strip()) for pid in obj.print_ids.split(',') if pid.strip()]
+        prints = db.query(models.Print).filter(models.Print.id.in_(print_ids)).all()
+        prints_display = ', '.join([p.code for p in prints])
+
+    styles_display = None
+    if obj.style_ids:
+        style_ids = [int(sid.strip()) for sid in obj.style_ids.split(',') if sid.strip()]
+        styles = db.query(models.Style).filter(models.Style.id.in_(style_ids)).all()
+        styles_display = ', '.join([s.code for s in styles])
+
+    return {
+        "id": obj.id,
+        "rule_type": obj.rule_type,
+        "position_id": obj.position_id,
+        "style_ids": obj.style_ids,
+        "print_ids": obj.print_ids,
+        "print_ids_display": prints_display,
+        "style_ids_display": styles_display,
+        "is_active": obj.is_active,
+        "created_at": obj.created_at,
+        "updated_at": obj.updated_at,
+        "position": schemas.PositionOut.model_validate(obj.position) if obj.position else None,
+    }
 
 
-@router.post("/", response_model=schemas.StylePositionRuleOut, status_code=201)
+@router.post("/", status_code=201)
 def create_rule(data: schemas.StylePositionRuleCreate, db: Session = Depends(get_db)):
-    # 根据规则类型验证必填字段
-    if data.rule_type == 'style_position':
-        if not data.style_id or not data.position_id:
-            raise HTTPException(400, "款式位置规则需要 style_id 和 position_id")
-        if not crud.get_style(db, data.style_id):
-            raise HTTPException(400, f"款式 ID {data.style_id} 不存在")
-        if not crud.get_position(db, data.position_id):
-            raise HTTPException(400, f"位置 ID {data.position_id} 不存在")
-        # 检查是否已存在
-        if crud.get_style_position_rule_by_key(db, data.style_id, data.position_id):
-            raise HTTPException(400, "该款式+位置组合已存在")
+    try:
+        # 根据规则类型验证必填字段
+        if data.rule_type == 3:  # style_position
+            if not data.style_codes or not data.position_code:
+                raise HTTPException(400, "款式位置规则需要 style_codes 和 position_code")
+        elif data.rule_type == 2:  # position_restriction
+            if not data.position_code or not data.style_codes or not data.print_codes:
+                raise HTTPException(400, "位置限定规则需要 position_code、style_codes 和 print_codes")
+        elif data.rule_type == 1:  # style_ban
+            if not data.style_codes:
+                raise HTTPException(400, "款式全禁规则需要 style_codes")
+        else:
+            raise HTTPException(400, f"未知的规则类型: {data.rule_type}")
 
-    elif data.rule_type == 'position_restriction':
-        if not data.position_id:
-            raise HTTPException(400, "位置限定规则需要 position_id")
-        if not crud.get_position(db, data.position_id):
-            raise HTTPException(400, f"位置 ID {data.position_id} 不存在")
-
-    elif data.rule_type == 'style_ban':
-        if not data.style_id:
-            raise HTTPException(400, "款式全禁规则需要 style_id")
-        if not crud.get_style(db, data.style_id):
-            raise HTTPException(400, f"款式 ID {data.style_id} 不存在")
-        # 检查是否已存在
-        if crud.get_style_ban_by_style_id(db, data.style_id):
-            raise HTTPException(400, "该款式已在全禁列表中")
-
-    else:
-        raise HTTPException(400, f"未知的规则类型: {data.rule_type}")
-
-    return crud.create_style_position_rule(db, data)
+        obj = crud.create_style_position_rule(db, data)
+        return {"id": obj.id, "message": "创建成功"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
-@router.put("/{rule_id}", response_model=schemas.StylePositionRuleOut)
+@router.put("/{rule_id}")
 def update_rule(rule_id: int, data: schemas.StylePositionRuleUpdate, db: Session = Depends(get_db)):
-    obj = crud.update_style_position_rule(db, rule_id, data)
-    if not obj:
-        raise HTTPException(status_code=404, detail="规则不存在")
-    return obj
+    try:
+        obj = crud.update_style_position_rule(db, rule_id, data)
+        if not obj:
+            raise HTTPException(status_code=404, detail="规则不存在")
+        return {"id": obj.id, "message": "更新成功"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.delete("/{rule_id}")
