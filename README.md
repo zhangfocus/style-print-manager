@@ -21,7 +21,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-浏览器访问：http://localhost:8000
+浏览器访问：http://localhost:8001
 
 ## Excel 导入格式
 
@@ -49,7 +49,7 @@ python run.py
 
 ## API 文档
 
-启动后访问：http://localhost:8000/docs
+启动后访问：http://localhost:8001/docs
 
 ## 技术栈
 

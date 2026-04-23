@@ -279,7 +279,7 @@ cd backend/app
 
 # 重启服务（如果需要）
 taskkill //F //IM python.exe
-cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 2. 前端开发

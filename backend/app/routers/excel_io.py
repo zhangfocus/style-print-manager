@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import pandas as pd
 from .. import crud, schemas, models
 from ..database import get_db
 
@@ -54,6 +55,9 @@ def _excel_date(val):
 
 def _str(v):
     if v is None:
+        return None
+    # 处理 pandas 的 NaN 值
+    if pd.isna(v):
         return None
     s = str(v).strip()
     return s if s else None
@@ -254,97 +258,176 @@ def _split_multi(s: str):
     return [x.strip() for x in _re.split(r'[,，、\n\r]+', s) if x.strip()]
 
 
-def _parse_print_list(raw: str):
+def _parse_code_list(raw: str):
     """
-    解析印花列表字符串：
-    - 返回 None  → 不限制任何印花
-    - 返回 list  → 仅允许列表中的印花（已去重排序，已剔除特殊印花）
+    解析编码列表字符串（款式/印花/位置）：
+    - 返回 None  → 空值
+    - 返回 list  → 编码列表（已去重排序，印花已剔除特殊值）
     """
     if not raw:
         return None
-    codes = [c for c in _split_multi(raw) if c not in _SPECIAL_PRINTS]
+    codes = _split_multi(raw)
+    # 如果是印花编码，过滤特殊印花
+    codes = [c for c in codes if c not in _SPECIAL_PRINTS]
     return sorted(set(codes)) if codes else None
-
-
-def _upsert_rule(db: Session, style_code: str, position_name: str, new_prints):
-    """
-    向 style_position_rules 写入或合并一条规则（通过 style_code / position_name 查 ID）。
-    - new_prints=None  → 该位置不限印花（若已有列表，升级为 NULL）
-    - new_prints=list  → 与已有允许列表取并集
-    找不到款式或位置时抛 ValueError，由调用方记录为错误行。
-    """
-    style = crud.get_style_by_code(db, style_code)
-    if not style:
-        raise ValueError(f"款式 '{style_code}' 不在款式表中")
-    position = crud.get_position_by_name(db, position_name)
-    if not position:
-        raise ValueError(f"位置 '{position_name}' 不在位置表中")
-
-    existing = crud.get_style_position_rule_by_key(db, style.id, position.id)
-    if existing:
-        if new_prints is None:
-            if existing.allowed_prints is not None:
-                existing.allowed_prints = None
-                db.commit()
-        else:
-            if existing.allowed_prints is not None:
-                old_set = set(existing.allowed_prints.split(","))
-                merged = sorted(old_set | set(new_prints))
-                existing.allowed_prints = ",".join(merged)
-                db.commit()
-    else:
-        ap = ",".join(new_prints) if new_prints else None
-        db.add(models.StylePositionRule(
-            style_id=style.id,
-            position_id=position.id,
-            allowed_prints=ap,
-        ))
-        db.commit()
-
-
-def _upsert_ban(db: Session, style_code: str):
-    style = crud.get_style_by_code(db, style_code)
-    if not style:
-        raise ValueError(f"款式 '{style_code}' 不在款式表中")
-    if not crud.get_style_ban_by_style_id(db, style.id):
-        db.add(models.StyleBan(style_id=style.id))
-        db.commit()
 
 
 def _import_restrictions(ws, db: Session):
     """
-    标准限定格式（3列）：
-      A=白坯款式编码  B=位置名称（空=全禁该款式）  C=印花编码（逗号分隔，空=不限）
-    同一 (款式, 位置) 多次导入时印花列表取并集。
+    特殊款式限定位置表导入（全量替换）
+
+    Excel格式（4列）：款式 | 位置 | 印花 | 限定款式
+
+    支持3种规则类型：
+    1. style_ban (类型1): 款式列有值 + 位置列为空 + 印花列为空
+    2. position_restriction (类型2): 款式列为空 + 位置列有值 + (印花列有值 或 限定款式列有值)
+    3. style_position (类型3): 款式列有值 + 位置列有值
+
+    处理逻辑：
+    - 使用 pandas 读取 Excel，处理合并单元格
+    - 款式列使用 ffill() 向下填充（用于类型1和类型3）
+    - 全量替换：先清空所有规则，再导入新数据
     """
-    rows = list(ws.iter_rows(values_only=True))
-    rule_count, ban_count, errors = 0, 0, []
+    # 1. 提取数据到 pandas DataFrame
+    headers = [cell.value for cell in ws[1]]
+    data = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        data.append(list(row))
 
-    for row_idx, row in enumerate(rows[1:], 2):
-        style_code = _str(row[0]) if len(row) > 0 else None
-        pos_name   = _str(row[1]) if len(row) > 1 else None
-        prints_raw = _str(row[2]) if len(row) > 2 else None
+    df = pd.DataFrame(data, columns=headers)
 
-        if not style_code:
+    # 2. 标准化列名
+    df.columns = df.columns.str.strip()
+    col_map = {
+        "款式": "style",
+        "位置": "position",
+        "印花": "print",
+        "限定款式": "limit_styles"
+    }
+
+    # 尝试匹配列名（支持带*的列名）
+    for col in df.columns:
+        clean_col = col.rstrip("*").strip()
+        if clean_col in col_map:
+            df.rename(columns={col: col_map[clean_col]}, inplace=True)
+
+    # 确保必要的列存在
+    required_cols = ["style", "position", "print"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
+
+    if "limit_styles" not in df.columns:
+        df["limit_styles"] = None
+
+    # 3. 处理合并单元格：款式列向下填充
+    df["style"] = df["style"].ffill()
+
+    # 4. 清空现有规则（全量替换）
+    db.query(models.StylePositionRule).delete()
+    db.commit()
+
+    # 5. 解析并导入规则
+    type1_count, type2_count, type3_count = 0, 0, 0
+    errors = []
+    current_style = None  # 跟踪当前款式（用于类型1和类型3）
+
+    for idx, row in df.iterrows():
+        row_num = idx + 2  # Excel 行号（从2开始）
+
+        # 提取并清理数据
+        style_code = _str(row.get("style"))
+        position_name = _str(row.get("position"))
+        print_codes_str = _str(row.get("print"))
+        limit_styles_str = _str(row.get("limit_styles"))
+
+        # 跳过完全空行
+        if not any([style_code, position_name, print_codes_str, limit_styles_str]):
             continue
 
-        if pos_name:
-            print_list = _parse_print_list(prints_raw)
-            try:
-                _upsert_rule(db, style_code, pos_name, print_list)
-                rule_count += 1
-            except Exception as e:
-                errors.append(f"第{row_idx}行 ({style_code}, {pos_name}): {e}")
-                if len(errors) >= 30:
-                    return rule_count + ban_count, errors
-        else:
-            try:
-                _upsert_ban(db, style_code)
-                ban_count += 1
-            except Exception as e:
-                errors.append(f"第{row_idx}行 全禁 ({style_code}): {e}")
+        # 更新当前款式
+        if style_code:
+            current_style = style_code
 
-    return rule_count + ban_count, errors
+        # 判断规则类型并创建规则
+        try:
+            # 类型2: position_restriction（款式列为空 + 位置有值）
+            if not style_code and position_name:
+                print_codes = _parse_code_list(print_codes_str)
+                limit_style_codes = _parse_code_list(limit_styles_str)
+
+                # 类型2要求至少有一个维度有值
+                if not print_codes and not limit_style_codes:
+                    errors.append(f"第{row_num}行：位置限定规则的印花和限定款式不能同时为空")
+                    continue
+
+                # 通过位置名称查找位置编码
+                position = crud.get_position_by_name(db, position_name)
+                if not position:
+                    errors.append(f"第{row_num}行：位置 '{position_name}' 不存在")
+                    continue
+
+                rule_data = schemas.StylePositionRuleCreate(
+                    rule_type=2,
+                    position_code=position.code,  # 使用位置编码
+                    style_codes=limit_style_codes,
+                    print_codes=print_codes,
+                    is_active=True
+                )
+                crud.create_style_position_rule(db, rule_data)
+                type2_count += 1
+
+            # 类型1: style_ban（款式列有值 + 位置为空 + 印花为空）
+            elif style_code and not position_name and not print_codes_str:
+                if not current_style:
+                    errors.append(f"第{row_num}行：款式全禁规则缺少款式编码")
+                    continue
+
+                rule_data = schemas.StylePositionRuleCreate(
+                    rule_type=1,
+                    position_code=None,
+                    style_codes=[current_style],
+                    print_codes=None,
+                    is_active=True
+                )
+                crud.create_style_position_rule(db, rule_data)
+                type1_count += 1
+
+            # 类型3: style_position（款式列有值 + 位置有值）
+            elif style_code and position_name:
+                if not current_style:
+                    errors.append(f"第{row_num}行：款式位置规则缺少款式编码")
+                    continue
+
+                # 通过位置名称查找位置编码
+                position = crud.get_position_by_name(db, position_name)
+                if not position:
+                    errors.append(f"第{row_num}行：位置 '{position_name}' 不存在")
+                    continue
+
+                print_codes = _parse_code_list(print_codes_str)
+
+                rule_data = schemas.StylePositionRuleCreate(
+                    rule_type=3,
+                    position_code=position.code,  # 使用位置编码
+                    style_codes=[current_style],
+                    print_codes=print_codes,  # None 表示不限印花
+                    is_active=True
+                )
+                crud.create_style_position_rule(db, rule_data)
+                type3_count += 1
+
+            else:
+                # 无法识别的规则类型
+                errors.append(f"第{row_num}行：无法识别规则类型（款式={style_code}, 位置={position_name}）")
+
+        except Exception as e:
+            errors.append(f"第{row_num}行处理失败: {e}")
+            if len(errors) >= 50:
+                break
+
+    total_count = type1_count + type2_count + type3_count
+    return total_count, errors
 
 
 def _result(label: str, count: int, errors: list) -> schemas.ImportResult:
@@ -503,19 +586,75 @@ def template_positions(db: Session = Depends(get_db)):
 
 @router.get("/template/restrictions", summary="下载限定导入模板")
 def template_restrictions(db: Session = Depends(get_db)):
+    """
+    下载限定导入模板（4列格式）
+    支持3种规则类型：
+    - 类型1 (style_ban): 款式有值，位置为空，印花为空
+    - 类型2 (position_restriction): 款式为空，位置有值，印花或限定款式有值
+    - 类型3 (style_position): 款式有值，位置有值，印花可选
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "限定"
-    ws.append(["白坯款式编码*", "位置名称（空=全禁该款式）", "允许印花编码（逗号分隔，空=不限）"])
+    ws.append(["款式*", "位置", "印花（逗号分隔，空=不限）", "限定款式（逗号分隔）"])
     _apply_header_style(ws)
-    for r in crud.get_style_position_rules(db, limit=3):
-        ws.append([
-            r.style.code if r.style else "",
-            r.position.name if r.position else "",
-            r.allowed_prints or "",
-        ])
-    for b in crud.get_style_bans(db, limit=1):
-        ws.append([b.style.code if b.style else "", "", ""])
+
+    # 添加示例数据
+    rules = crud.get_style_position_rules(db, limit=10)
+
+    for r in rules:
+        # 根据规则类型生成不同的行
+        if r.rule_type == 1:  # style_ban
+            # 款式全禁：款式有值，其他为空
+            style_codes = r.style_ids.split(",") if r.style_ids else []
+            for style_id in style_codes:
+                style = crud.get_style(db, int(style_id))
+                if style:
+                    ws.append([style.code, "", "", ""])
+
+        elif r.rule_type == 2:  # position_restriction
+            # 位置限定：款式为空，位置有值，印花和限定款式有值
+            position_name = r.position.name if r.position else ""
+
+            # 获取印花编码
+            print_codes = []
+            if r.print_ids:
+                for print_id in r.print_ids.split(","):
+                    print_obj = crud.get_print(db, int(print_id))
+                    if print_obj:
+                        print_codes.append(print_obj.code)
+            print_codes_str = ",".join(print_codes) if print_codes else ""
+
+            # 获取款式编码
+            style_codes = []
+            if r.style_ids:
+                for style_id in r.style_ids.split(","):
+                    style = crud.get_style(db, int(style_id))
+                    if style:
+                        style_codes.append(style.code)
+            style_codes_str = ",".join(style_codes) if style_codes else ""
+
+            ws.append(["", position_name, print_codes_str, style_codes_str])
+
+        elif r.rule_type == 3:  # style_position
+            # 款式位置限定：款式有值，位置有值，印花可选
+            style_codes = r.style_ids.split(",") if r.style_ids else []
+            position_name = r.position.name if r.position else ""
+
+            # 获取印花编码
+            print_codes = []
+            if r.print_ids:
+                for print_id in r.print_ids.split(","):
+                    print_obj = crud.get_print(db, int(print_id))
+                    if print_obj:
+                        print_codes.append(print_obj.code)
+            print_codes_str = ",".join(print_codes) if print_codes else ""
+
+            for style_id in style_codes:
+                style = crud.get_style(db, int(style_id))
+                if style:
+                    ws.append([style.code, position_name, print_codes_str, ""])
+
     return _stream_wb(wb, "template_restrictions.xlsx")
 
 
@@ -580,23 +719,93 @@ def export_excel(
 
     if "rules" in selected:
         ws = wb.create_sheet("限定规则")
-        ws.append(["白坯款式编码", "位置名称", "允许印花编码(逗号分隔，空=不限)", "是否启用", "备注"])
+        ws.append(["款式", "位置", "印花（逗号分隔）", "限定款式（逗号分隔）", "规则类型", "是否启用"])
         _apply_header_style(ws)
         for r in crud.get_style_position_rules(db, limit=999999):
-            ws.append([
-                r.style.code if r.style else "",
-                r.position.name if r.position else "",
-                r.allowed_prints or "",
-                1 if r.is_active else 0,
-                r.remark,
-            ])
+            # 根据规则类型生成不同的行
+            rule_type_name = {1: "款式全禁", 2: "位置限定", 3: "款式位置限定"}.get(r.rule_type, "未知")
+
+            if r.rule_type == 1:  # style_ban
+                style_codes = r.style_ids.split(",") if r.style_ids else []
+                for style_id in style_codes:
+                    style = crud.get_style(db, int(style_id))
+                    if style:
+                        ws.append([
+                            style.code,
+                            "",
+                            "",
+                            "",
+                            rule_type_name,
+                            1 if r.is_active else 0
+                        ])
+
+            elif r.rule_type == 2:  # position_restriction
+                position_name = r.position.name if r.position else ""
+
+                # 获取印花编码
+                print_codes = []
+                if r.print_ids:
+                    for print_id in r.print_ids.split(","):
+                        print_obj = crud.get_print(db, int(print_id))
+                        if print_obj:
+                            print_codes.append(print_obj.code)
+                print_codes_str = ",".join(print_codes) if print_codes else ""
+
+                # 获取款式编码
+                style_codes = []
+                if r.style_ids:
+                    for style_id in r.style_ids.split(","):
+                        style = crud.get_style(db, int(style_id))
+                        if style:
+                            style_codes.append(style.code)
+                style_codes_str = ",".join(style_codes) if style_codes else ""
+
+                ws.append([
+                    "",
+                    position_name,
+                    print_codes_str,
+                    style_codes_str,
+                    rule_type_name,
+                    1 if r.is_active else 0
+                ])
+
+            elif r.rule_type == 3:  # style_position
+                style_codes = r.style_ids.split(",") if r.style_ids else []
+                position_name = r.position.name if r.position else ""
+
+                # 获取印花编码
+                print_codes = []
+                if r.print_ids:
+                    for print_id in r.print_ids.split(","):
+                        print_obj = crud.get_print(db, int(print_id))
+                        if print_obj:
+                            print_codes.append(print_obj.code)
+                print_codes_str = ",".join(print_codes) if print_codes else ""
+
+                for style_id in style_codes:
+                    style = crud.get_style(db, int(style_id))
+                    if style:
+                        ws.append([
+                            style.code,
+                            position_name,
+                            print_codes_str,
+                            "",
+                            rule_type_name,
+                            1 if r.is_active else 0
+                        ])
 
     if "bans" in selected:
+        # bans 已经包含在 rules 中（类型1），这里保留是为了向后兼容
         ws = wb.create_sheet("全禁款式")
-        ws.append(["白坯款式编码", "备注"])
+        ws.append(["白坯款式编码", "是否启用"])
         _apply_header_style(ws)
-        for b in crud.get_style_bans(db, limit=999999):
-            ws.append([b.style.code if b.style else "", b.remark])
+        for r in crud.get_style_position_rules(db, limit=999999):
+            if r.rule_type == 1:  # style_ban
+                style_codes = r.style_ids.split(",") if r.style_ids else []
+                for style_id in style_codes:
+                    style = crud.get_style(db, int(style_id))
+                    if style:
+                        ws.append([style.code, 1 if r.is_active else 0])
 
     if not wb.sheetnames:
         raise HTTPException(400, "未选择任何有效的导出实体")
