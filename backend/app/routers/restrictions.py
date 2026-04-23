@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from .. import crud, schemas
 from ..database import get_db
+from ..pattern_suffix_validator import check_pattern_suffix_rule, filter_patterns_by_suffix, filter_positions_by_suffix
 
 router = APIRouter(prefix="/api/restrictions", tags=["限定规则"])
 bans_router = APIRouter(prefix="/api/bans", tags=["全禁款式"])
@@ -99,10 +100,32 @@ def check_restriction(
     """
     from sqlalchemy import text
     from .. import models
+    from ..name_resolver import resolve_names_to_ids
 
-    style_id = data.style_id
-    position_id = data.position_id
-    print_id = data.print_id
+    # 转换名称为ID
+    style_id, position_id, print_id = resolve_names_to_ids(
+        data.style_code, data.position_name, data.print_code
+    )
+
+    # 步骤0: 检查印花后缀规则（硬性全局规则）
+    position = db.query(models.Position).filter(models.Position.id == position_id).first()
+    if position:
+        try:
+            allowed, error_msg = check_pattern_suffix_rule(data.print_code, position.area)
+            if not allowed:
+                return schemas.RestrictionCheckResponse(
+                    allowed=False,
+                    reason=error_msg,
+                    rule_type="pattern_suffix",
+                    rule_id=None
+                )
+        except ValueError as e:
+            return schemas.RestrictionCheckResponse(
+                allowed=False,
+                reason=str(e),
+                rule_type="pattern_suffix",
+                rule_id=None
+            )
 
     # 步骤1: 检查款式全禁（类型1）
     style_ban = db.query(models.StylePositionRule).filter(
@@ -114,7 +137,7 @@ def check_restriction(
     if style_ban:
         return schemas.RestrictionCheckResponse(
             allowed=False,
-            reason=f"款式 {style_id} 完全禁止印花",
+            reason=f"款式 {data.style_code} 完全禁止印花",
             rule_type="style_ban",
             rule_id=style_ban.id
         )
@@ -134,7 +157,7 @@ def check_restriction(
             if str(style_id) not in [s.strip() for s in style_ids_list]:
                 return schemas.RestrictionCheckResponse(
                     allowed=False,
-                    reason=f"款式 {style_id} 不在位置 {position_id} 的允许款式列表中",
+                    reason=f"款式 {data.style_code} 不在位置 {data.position_name} 的允许款式列表中",
                     rule_type="position_restriction",
                     rule_id=position_restriction.id
                 )
@@ -146,7 +169,7 @@ def check_restriction(
             if str(print_id) not in [p.strip() for p in print_ids_list]:
                 return schemas.RestrictionCheckResponse(
                     allowed=False,
-                    reason=f"印花 {print_id} 不在位置 {position_id} 的允许印花列表中",
+                    reason=f"印花 {data.print_code} 不在位置 {data.position_name} 的允许印花列表中",
                     rule_type="position_restriction",
                     rule_id=position_restriction.id
                 )
@@ -154,7 +177,7 @@ def check_restriction(
         # 位置限定通过
         return schemas.RestrictionCheckResponse(
             allowed=True,
-            reason=f"符合位置 {position_id} 的限定规则",
+            reason=f"符合位置 {data.position_name} 的限定规则",
             rule_type="position_restriction",
             rule_id=position_restriction.id
         )
@@ -178,7 +201,7 @@ def check_restriction(
             # 该位置不在款式的白名单中（黑名单策略）
             return schemas.RestrictionCheckResponse(
                 allowed=False,
-                reason=f"款式 {style_id} 在位置 {position_id} 不可用（未在白名单中）",
+                reason=f"款式 {data.style_code} 在位置 {data.position_name} 不可用（未在白名单中）",
                 rule_type="style_position",
                 rule_id=None
             )
@@ -190,7 +213,7 @@ def check_restriction(
             # 不限印花
             return schemas.RestrictionCheckResponse(
                 allowed=True,
-                reason=f"款式 {style_id} 在位置 {position_id} 不限印花",
+                reason=f"款式 {data.style_code} 在位置 {data.position_name} 不限印花",
                 rule_type="style_position",
                 rule_id=style_position_for_this_pos.id
             )
@@ -199,7 +222,7 @@ def check_restriction(
         if str(print_id) not in [p.strip() for p in print_ids_list]:
             return schemas.RestrictionCheckResponse(
                 allowed=False,
-                reason=f"印花 {print_id} 不在款式 {style_id} + 位置 {position_id} 的允许印花列表中",
+                reason=f"印花 {data.print_code} 不在款式 {data.style_code} + 位置 {data.position_name} 的允许印花列表中",
                 rule_type="style_position",
                 rule_id=style_position_for_this_pos.id
             )
@@ -207,7 +230,7 @@ def check_restriction(
         # 款式位置限定通过
         return schemas.RestrictionCheckResponse(
             allowed=True,
-            reason=f"符合款式 {style_id} 在位置 {position_id} 的限定规则",
+            reason=f"符合款式 {data.style_code} 在位置 {data.position_name} 的限定规则",
             rule_type="style_position",
             rule_id=style_position_for_this_pos.id
         )
@@ -223,7 +246,7 @@ def check_restriction(
 
 @router.get("/available-by-style", response_model=schemas.AvailableByStyleResponse)
 def get_available_by_style(
-    style_id: int = Query(..., description="款式ID"),
+    style_code: str = Query(..., description="款式编码"),
     db: Session = Depends(get_db),
 ):
     """
@@ -231,6 +254,10 @@ def get_available_by_style(
     """
     from sqlalchemy import text
     from .. import models
+    from ..name_resolver import resolve_style_code
+
+    # 转换名称为ID
+    style_id = resolve_style_code(style_code)
 
     # 步骤1: 检查款式全禁
     style_ban = db.query(models.StylePositionRule).filter(
@@ -241,7 +268,7 @@ def get_available_by_style(
 
     if style_ban:
         return schemas.AvailableByStyleResponse(
-            style_id=style_id,
+            style_code=style_code,
             is_banned=True,
             available_positions=[]
         )
@@ -291,14 +318,16 @@ def get_available_by_style(
                 print_ids = [p.id for p in prints]
                 print_codes = [p.code for p in prints]
 
+            # 应用后缀规则过滤
+            print_codes = filter_patterns_by_suffix(print_codes, position.area)
+
             available_positions.append(schemas.AvailablePositionWithPrints(
-                position_id=position.id,
                 position_name=position.name,
                 position_code=position.code,
-                print_ids=print_ids,
                 print_codes=print_codes,
+                available=len(print_codes) > 0,
                 is_restricted=print_ids_list is not None,
-                reason=f"位置 {position_id} 限定了允许的印花列表" if print_ids_list else "位置限定不限印花"
+                reason=f"位置 {position.name} 限定了允许的印花列表" if print_ids_list else "位置限定不限印花"
             ))
             continue
 
@@ -327,7 +356,6 @@ def get_available_by_style(
             if print_ids_list is None:
                 # 不限印花
                 all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
-                print_ids = [p.id for p in all_prints]
                 print_codes = [p.code for p in all_prints]
             else:
                 print_ids = [int(pid.strip()) for pid in print_ids_list]
@@ -335,37 +363,39 @@ def get_available_by_style(
                     models.Print.id.in_(print_ids),
                     models.Print.is_active == True
                 ).order_by(models.Print.id).all()
-                print_ids = [p.id for p in prints]
                 print_codes = [p.code for p in prints]
 
+            # 应用后缀规则过滤
+            print_codes = filter_patterns_by_suffix(print_codes, position.area)
+
             available_positions.append(schemas.AvailablePositionWithPrints(
-                position_id=position.id,
                 position_name=position.name,
                 position_code=position.code,
-                print_ids=print_ids,
                 print_codes=print_codes,
+                available=len(print_codes) > 0,
                 is_restricted=print_ids_list is not None,
-                reason=f"款式 {style_id} 在位置 {position_id} 限定了允许的印花列表" if print_ids_list else "款式位置限定不限印花"
+                reason=f"款式 {style_code} 在位置 {position.name} 限定了允许的印花列表" if print_ids_list else "款式位置限定不限印花"
             ))
             continue
 
         # 款式无类型3规则，默认返回所有印花
         all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
-        print_ids = [p.id for p in all_prints]
         print_codes = [p.code for p in all_prints]
 
+        # 应用后缀规则过滤
+        print_codes = filter_patterns_by_suffix(print_codes, position.area)
+
         available_positions.append(schemas.AvailablePositionWithPrints(
-            position_id=position.id,
             position_name=position.name,
             position_code=position.code,
-            print_ids=print_ids,
             print_codes=print_codes,
+            available=len(print_codes) > 0,
             is_restricted=False,
             reason="无限定规则，所有印花可用"
         ))
 
     return schemas.AvailableByStyleResponse(
-        style_id=style_id,
+        style_code=style_code,
         is_banned=False,
         available_positions=available_positions
     )
@@ -373,8 +403,8 @@ def get_available_by_style(
 
 @router.get("/available-prints")
 def get_available_prints(
-    style_id: int = Query(..., description="款式ID"),
-    position_id: int = Query(..., description="位置ID"),
+    style_code: str = Query(..., description="款式编码"),
+    position_name: str = Query(..., description="位置名称"),
     db: Session = Depends(get_db),
 ):
     """
@@ -382,6 +412,21 @@ def get_available_prints(
     """
     from sqlalchemy import text
     from .. import models
+    from ..name_resolver import resolve_style_code, resolve_position_name
+
+    # 转换名称为ID
+    style_id = resolve_style_code(style_code)
+    position_id = resolve_position_name(position_name)
+
+    # 获取位置信息用于后缀规则检查
+    position = db.query(models.Position).filter(models.Position.id == position_id).first()
+    if not position:
+        return {
+            "available": False,
+            "print_codes": [],
+            "is_restricted": True,
+            "reason": f"位置 {position_name} 不存在"
+        }
 
     # 步骤1: 检查款式全禁
     style_ban = db.query(models.StylePositionRule).filter(
@@ -393,9 +438,9 @@ def get_available_prints(
     if style_ban:
         return {
             "available": False,
-            "print_ids": [],
+            "print_codes": [],
             "is_restricted": True,
-            "reason": f"款式 {style_id} 完全禁止印花"
+            "reason": f"款式 {style_code} 完全禁止印花"
         }
 
     # 步骤2: 检查位置限定（类型2，优先级最高）
@@ -414,9 +459,9 @@ def get_available_prints(
             if str(style_id) not in [s.strip() for s in style_ids_list]:
                 return {
                     "available": False,
-                    "print_ids": [],
+                    "print_codes": [],
                     "is_restricted": True,
-                    "reason": f"款式 {style_id} 不在位置 {position_id} 的允许款式列表中"
+                    "reason": f"款式 {style_code} 不在位置 {position_name} 的允许款式列表中"
                 }
 
         # 款式通过，返回允许的印花
@@ -424,16 +469,24 @@ def get_available_prints(
 
         if print_ids_list is None:
             # 不限印花
-            all_prints = db.query(models.Print.id).filter(models.Print.is_active == True).all()
-            print_ids = [p.id for p in all_prints]
+            all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+            print_codes = [p.code for p in all_prints]
         else:
             print_ids = [int(pid.strip()) for pid in print_ids_list]
+            prints = db.query(models.Print).filter(
+                models.Print.id.in_(print_ids),
+                models.Print.is_active == True
+            ).order_by(models.Print.id).all()
+            print_codes = [p.code for p in prints]
+
+        # 应用后缀规则过滤
+        print_codes = filter_patterns_by_suffix(print_codes, position.area)
 
         return {
-            "available": True,
-            "print_ids": sorted(print_ids),
+            "available": len(print_codes) > 0,
+            "print_codes": print_codes,
             "is_restricted": print_ids_list is not None,
-            "reason": f"位置 {position_id} 限定了允许的印花列表" if print_ids_list else "位置限定不限印花"
+            "reason": f"位置 {position_name} 限定了允许的印花列表" if print_ids_list else "位置限定不限印花"
         }
 
     # 步骤3: 检查款式是否有类型3规则（黑名单策略）
@@ -455,9 +508,9 @@ def get_available_prints(
             # 该位置不在款式的白名单中
             return {
                 "available": False,
-                "print_ids": [],
+                "print_codes": [],
                 "is_restricted": True,
-                "reason": f"款式 {style_id} 在位置 {position_id} 不可用（未在白名单中）"
+                "reason": f"款式 {style_code} 在位置 {position_name} 不可用（未在白名单中）"
             }
 
         # 该位置在白名单中，返回允许的印花
@@ -465,25 +518,36 @@ def get_available_prints(
 
         if print_ids_list is None:
             # 不限印花
-            all_prints = db.query(models.Print.id).filter(models.Print.is_active == True).all()
-            print_ids = [p.id for p in all_prints]
+            all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+            print_codes = [p.code for p in all_prints]
         else:
             print_ids = [int(pid.strip()) for pid in print_ids_list]
+            prints = db.query(models.Print).filter(
+                models.Print.id.in_(print_ids),
+                models.Print.is_active == True
+            ).order_by(models.Print.id).all()
+            print_codes = [p.code for p in prints]
+
+        # 应用后缀规则过滤
+        print_codes = filter_patterns_by_suffix(print_codes, position.area)
 
         return {
-            "available": True,
-            "print_ids": sorted(print_ids),
+            "available": len(print_codes) > 0,
+            "print_codes": print_codes,
             "is_restricted": print_ids_list is not None,
-            "reason": f"款式 {style_id} 在位置 {position_id} 限定了允许的印花列表" if print_ids_list else "款式位置限定不限印花"
+            "reason": f"款式 {style_code} 在位置 {position_name} 限定了允许的印花列表" if print_ids_list else "款式位置限定不限印花"
         }
 
     # 步骤4: 款式无类型3规则，默认返回所有印花
-    all_prints = db.query(models.Print.id).filter(models.Print.is_active == True).all()
-    print_ids = [p.id for p in all_prints]
+    all_prints = db.query(models.Print).filter(models.Print.is_active == True).order_by(models.Print.id).all()
+    print_codes = [p.code for p in all_prints]
+
+    # 应用后缀规则过滤
+    print_codes = filter_patterns_by_suffix(print_codes, position.area)
 
     return {
-        "available": True,
-        "print_ids": sorted(print_ids),
+        "available": len(print_codes) > 0,
+        "print_codes": print_codes,
         "is_restricted": False,
         "reason": "无限定规则，所有印花可用"
     }
@@ -491,8 +555,8 @@ def get_available_prints(
 
 @router.get("/available-positions")
 def get_available_positions(
-    style_id: int = Query(..., description="款式ID"),
-    print_id: int = Query(..., description="印花ID"),
+    style_code: str = Query(..., description="款式编码"),
+    print_code: str = Query(..., description="印花编码"),
     db: Session = Depends(get_db),
 ):
     """
@@ -500,6 +564,12 @@ def get_available_positions(
     """
     from sqlalchemy import text
     from .. import models
+    from ..name_resolver import resolve_style_code, resolve_print_code
+    from ..cache import name_cache
+
+    # 转换名称为ID
+    style_id = resolve_style_code(style_code)
+    print_id = resolve_print_code(print_code)
 
     # 步骤1: 检查款式全禁
     style_ban = db.query(models.StylePositionRule).filter(
@@ -511,9 +581,9 @@ def get_available_positions(
     if style_ban:
         return {
             "available": False,
-            "position_ids": [],
+            "position_names": [],
             "is_restricted": True,
-            "reason": f"款式 {style_id} 完全禁止印花"
+            "reason": f"款式 {style_code} 完全禁止印花"
         }
 
     # 步骤2: 查询款式在类型3中的所有规则
@@ -574,12 +644,22 @@ def get_available_positions(
         if not print_ok:
             candidate_position_ids.discard(position_id)
 
-    # 步骤7: 返回结果
+    # 步骤7: 应用后缀规则过滤位置
+    # 获取所有候选位置的详细信息
+    positions_with_area = []
+    for pos_id in candidate_position_ids:
+        pos = db.query(models.Position).filter(models.Position.id == pos_id).first()
+        if pos:
+            positions_with_area.append((pos.name, pos.area))
+
+    # 应用后缀规则过滤
+    position_names = filter_positions_by_suffix(positions_with_area, print_code)
+
     is_restricted = len(style_position_rules) > 0 or len(position_restrictions) > 0
 
     return {
-        "available": len(candidate_position_ids) > 0,
-        "position_ids": sorted(list(candidate_position_ids)),
+        "available": len(position_names) > 0,
+        "position_names": position_names,
         "is_restricted": is_restricted,
         "reason": "根据限定规则过滤" if is_restricted else "无限定规则，所有位置可用"
     }

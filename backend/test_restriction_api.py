@@ -13,39 +13,6 @@ import sys
 BASE_URL = "http://localhost:8001"
 
 
-def get_style_id_by_code(code: str) -> int:
-    """通过款式编码获取ID"""
-    response = requests.get(f"{BASE_URL}/api/styles", params={"keyword": code, "page": 1, "page_size": 10})
-    if response.status_code == 200:
-        items = response.json().get("items", [])
-        for item in items:
-            if item["code"] == code:
-                return item["id"]
-    return None
-
-
-def get_position_id_by_name(name: str) -> int:
-    """通过位置名称获取ID"""
-    response = requests.get(f"{BASE_URL}/api/positions", params={"keyword": name, "page": 1, "page_size": 50})
-    if response.status_code == 200:
-        items = response.json().get("items", [])
-        for item in items:
-            if item["name"] == name:
-                return item["id"]
-    return None
-
-
-def get_print_id_by_code(code: str) -> int:
-    """通过印花编码获取ID"""
-    response = requests.get(f"{BASE_URL}/api/prints", params={"keyword": code, "page": 1, "page_size": 10})
-    if response.status_code == 200:
-        items = response.json().get("items", [])
-        for item in items:
-            if item["code"] == code:
-                return item["id"]
-    return None
-
-
 def list_styles(limit=10):
     """列出款式"""
     response = requests.get(f"{BASE_URL}/api/styles", params={"page": 1, "page_size": limit})
@@ -105,30 +72,13 @@ def test_check_restriction(style_code=None, position_name=None, print_code=None)
             print(f"  {i}. {p['code']}")
         print_code = input("请输入印花编码（或直接回车使用第一个）: ").strip() or prints[0]['code']
 
-    # 转换为ID
     print(f"\n查询: 款式={style_code}, 位置={position_name}, 印花={print_code}")
 
-    style_id = get_style_id_by_code(style_code)
-    position_id = get_position_id_by_name(position_name)
-    print_id = get_print_id_by_code(print_code)
-
-    if not style_id:
-        print(f"[ERROR] 找不到款式: {style_code}")
-        return False
-    if not position_id:
-        print(f"[ERROR] 找不到位置: {position_name}")
-        return False
-    if not print_id:
-        print(f"[ERROR] 找不到印花: {print_code}")
-        return False
-
-    print(f"转换后ID: style_id={style_id}, position_id={position_id}, print_id={print_id}")
-
-    # 调用接口
+    # 直接使用名称调用接口
     payload = {
-        "style_id": style_id,
-        "position_id": position_id,
-        "print_id": print_id
+        "style_code": style_code,
+        "position_name": position_name,
+        "print_code": print_code
     }
 
     response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
@@ -164,19 +114,13 @@ def test_available_by_style(style_code=None):
 
     print(f"\n查询: 款式={style_code}")
 
-    style_id = get_style_id_by_code(style_code)
-    if not style_id:
-        print(f"[ERROR] 找不到款式: {style_code}")
-        return False
-
-    print(f"转换后ID: style_id={style_id}")
-
-    response = requests.get(f"{BASE_URL}/api/restrictions/available-by-style", params={"style_id": style_id})
+    # 直接使用名称调用接口
+    response = requests.get(f"{BASE_URL}/api/restrictions/available-by-style", params={"style_code": style_code})
     print(f"\n状态码: {response.status_code}")
 
     if response.status_code == 200:
         data = response.json()
-        print(f"款式ID: {data['style_id']}")
+        print(f"款式编码: {data['style_code']}")
         print(f"是否全禁: {data['is_banned']}")
         print(f"可用位置数量: {len(data['available_positions'])}")
 
@@ -184,15 +128,226 @@ def test_available_by_style(style_code=None):
             print(f"\n显示前5个位置详情:")
             for pos in data['available_positions'][:5]:
                 print(f"\n  位置: {pos['position_name']} ({pos['position_code']})")
-                print(f"  可用印花数量: {len(pos['print_ids'])}")
-                print(f"  是否受限: {pos['is_restricted']}")
-                print(f"  原因: {pos['reason']}")
+                print(f"  可用印花数量: {len(pos['print_codes'])}")
+                print(f"  是否受限: {pos.get('is_restricted', False)}")
+                print(f"  原因: {pos.get('reason', 'N/A')}")
                 if pos['print_codes']:
                     print(f"  印花示例: {', '.join(pos['print_codes'][:3])}")
     else:
         print(f"错误: {response.text}")
 
     return response.status_code == 200
+
+
+def test_pattern_suffix_rule():
+    """测试印花code后缀规则"""
+    print("\n=== 测试印花code后缀规则 ===")
+
+    # 获取测试数据
+    styles = list_styles()
+    positions = list_positions()
+
+    if not styles or not positions:
+        print("[ERROR] 缺少测试数据")
+        return False
+
+    style_code = styles[0]['code']
+
+    # 找到小图位置和大图位置
+    small_position = None
+    large_position = None
+
+    for pos in positions:
+        # 通过API获取位置详情来确定area
+        response = requests.get(f"{BASE_URL}/api/positions", params={"search": pos['name'], "page": 1, "page_size": 1})
+        if response.status_code == 200:
+            items = response.json().get("items", [])
+            if items:
+                area = items[0].get('area', '')
+                if '小图' in area and not small_position:
+                    small_position = pos['name']
+                elif '大图' in area and not large_position:
+                    large_position = pos['name']
+
+        if small_position and large_position:
+            break
+
+    if not small_position or not large_position:
+        print("[WARNING] 未找到小图位置或大图位置，跳过后缀规则测试")
+        return True
+
+    print(f"使用款式: {style_code}")
+    print(f"小图位置: {small_position}")
+    print(f"大图位置: {large_position}")
+
+    all_passed = True
+
+    # 测试用例1: X结尾印花 + 小图位置 = 允许
+    print("\n[测试1] X结尾印花 + 小图位置 (应该允许)")
+    payload = {
+        "style_code": style_code,
+        "position_name": small_position,
+        "print_code": "测试印花X"
+    }
+    response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if data['allowed']:
+            print("  ✓ 通过: 允许X结尾印花贴小图位置")
+        else:
+            print(f"  ✗ 失败: 应该允许但被拒绝 - {data['reason']}")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例2: X结尾印花 + 大图位置 = 拒绝
+    print("\n[测试2] X结尾印花 + 大图位置 (应该拒绝)")
+    payload = {
+        "style_code": style_code,
+        "position_name": large_position,
+        "print_code": "测试印花X"
+    }
+    response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if not data['allowed'] and data['rule_type'] == 'pattern_suffix':
+            print(f"  ✓ 通过: 正确拒绝 - {data['reason']}")
+        else:
+            print(f"  ✗ 失败: 应该拒绝但允许了")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例3: C结尾印花 + 大图位置 = 允许
+    print("\n[测试3] C结尾印花 + 大图位置 (应该允许)")
+    payload = {
+        "style_code": style_code,
+        "position_name": large_position,
+        "print_code": "测试印花C"
+    }
+    response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if data['allowed']:
+            print("  ✓ 通过: 允许C结尾印花贴大图位置")
+        else:
+            print(f"  ✗ 失败: 应该允许但被拒绝 - {data['reason']}")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例4: C结尾印花 + 小图位置 = 拒绝
+    print("\n[测试4] C结尾印花 + 小图位置 (应该拒绝)")
+    payload = {
+        "style_code": style_code,
+        "position_name": small_position,
+        "print_code": "测试印花C"
+    }
+    response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if not data['allowed'] and data['rule_type'] == 'pattern_suffix':
+            print(f"  ✓ 通过: 正确拒绝 - {data['reason']}")
+        else:
+            print(f"  ✗ 失败: 应该拒绝但允许了")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例5: 特殊印花 + 任意位置 = 允许
+    print("\n[测试5] 特殊印花(纯色) + 大图位置 (应该允许)")
+    payload = {
+        "style_code": style_code,
+        "position_name": large_position,
+        "print_code": "纯色"
+    }
+    response = requests.post(f"{BASE_URL}/api/restrictions/check", json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        if data['allowed']:
+            print("  ✓ 通过: 允许特殊印花贴任意位置")
+        else:
+            print(f"  ✗ 失败: 应该允许但被拒绝 - {data['reason']}")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例6: available-prints 应该过滤掉不符合后缀规则的印花
+    print("\n[测试6] available-prints 应该根据位置过滤印花")
+    response = requests.get(f"{BASE_URL}/api/restrictions/available-prints",
+                           params={"style_code": style_code, "position_name": small_position})
+    if response.status_code == 200:
+        data = response.json()
+        print_codes = data.get('print_codes', [])
+        # 检查是否有C/D结尾的印花（不应该有）
+        invalid_prints = [p for p in print_codes if p not in ['纯色', '自搭', '福袋'] and p and p[-1].upper() in ['C', 'D']]
+        if not invalid_prints:
+            print(f"  ✓ 通过: 小图位置正确过滤了C/D结尾印花 (共{len(print_codes)}个可用印花)")
+        else:
+            print(f"  ✗ 失败: 小图位置包含了不应该出现的C/D结尾印花: {invalid_prints}")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例7: available-positions 应该过滤掉不符合后缀规则的位置
+    print("\n[测试7] available-positions 应该根据印花过滤位置")
+    response = requests.get(f"{BASE_URL}/api/restrictions/available-positions",
+                           params={"style_code": style_code, "print_code": "测试印花X"})
+    if response.status_code == 200:
+        data = response.json()
+        position_names = data.get('position_names', [])
+        # X结尾印花不应该包含大图位置
+        if large_position not in position_names:
+            print(f"  ✓ 通过: X结尾印花正确排除了大图位置 (共{len(position_names)}个可用位置)")
+        else:
+            print(f"  ✗ 失败: X结尾印花包含了不应该出现的大图位置")
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    # 测试用例8: available-by-style 应该为每个位置过滤印花
+    print("\n[测试8] available-by-style 应该为每个位置过滤印花")
+    response = requests.get(f"{BASE_URL}/api/restrictions/available-by-style",
+                           params={"style_code": style_code})
+    if response.status_code == 200:
+        data = response.json()
+        positions = data.get('available_positions', [])
+
+        # 找到小图位置和大图位置的结果
+        small_pos_result = next((p for p in positions if p['position_name'] == small_position), None)
+        large_pos_result = next((p for p in positions if p['position_name'] == large_position), None)
+
+        test_passed = True
+        if small_pos_result:
+            invalid_prints = [p for p in small_pos_result['print_codes']
+                            if p not in ['纯色', '自搭', '福袋'] and p and p[-1].upper() in ['C', 'D']]
+            if invalid_prints:
+                print(f"  ✗ 失败: 小图位置包含了C/D结尾印花: {invalid_prints}")
+                test_passed = False
+
+        if large_pos_result:
+            invalid_prints = [p for p in large_pos_result['print_codes']
+                            if p not in ['纯色', '自搭', '福袋'] and p and p[-1].upper() == 'X']
+            if invalid_prints:
+                print(f"  ✗ 失败: 大图位置包含了X结尾印花: {invalid_prints}")
+                test_passed = False
+
+        if test_passed:
+            print(f"  ✓ 通过: 每个位置的印花列表都正确应用了后缀规则")
+        else:
+            all_passed = False
+    else:
+        print(f"  ✗ 失败: API错误 {response.status_code}")
+        all_passed = False
+
+    return all_passed
 
 
 def test_existing_apis(style_code=None, position_name=None, print_code=None):
@@ -215,25 +370,27 @@ def test_existing_apis(style_code=None, position_name=None, print_code=None):
         print("[ERROR] 缺少测试数据")
         return False
 
-    style_id = get_style_id_by_code(style_code)
-    position_id = get_position_id_by_name(position_name)
-    print_id = get_print_id_by_code(print_code)
-
-    # 测试 available-prints
+    # 测试 available-prints (直接使用名称)
     response1 = requests.get(f"{BASE_URL}/api/restrictions/available-prints",
-                            params={"style_id": style_id, "position_id": position_id})
+                            params={"style_code": style_code, "position_name": position_name})
     print(f"available-prints (款式+位置→印花) 状态码: {response1.status_code}")
     if response1.status_code == 200:
         data = response1.json()
-        print(f"  可用印花数量: {len(data.get('print_ids', []))}")
+        print(f"  可用: {data.get('available', False)}")
+        print(f"  可用印花数量: {len(data.get('print_codes', []))}")
+        print(f"  是否受限: {data.get('is_restricted', False)}")
+        print(f"  原因: {data.get('reason', 'N/A')}")
 
-    # 测试 available-positions
+    # 测试 available-positions (直接使用名称)
     response2 = requests.get(f"{BASE_URL}/api/restrictions/available-positions",
-                            params={"style_id": style_id, "print_id": print_id})
+                            params={"style_code": style_code, "print_code": print_code})
     print(f"available-positions (款式+印花→位置) 状态码: {response2.status_code}")
     if response2.status_code == 200:
         data = response2.json()
-        print(f"  可用位置数量: {len(data.get('position_ids', []))}")
+        print(f"  可用: {data.get('available', False)}")
+        print(f"  可用位置数量: {len(data.get('position_names', []))}")
+        print(f"  是否受限: {data.get('is_restricted', False)}")
+        print(f"  原因: {data.get('reason', 'N/A')}")
 
     return response1.status_code == 200 and response2.status_code == 200
 
@@ -273,6 +430,18 @@ if __name__ == "__main__":
             result1 = test_check_restriction(style_code, position_name, print_code)
             result2 = test_available_by_style(style_code)
             result3 = test_existing_apis(style_code, position_name, print_code)
+            result4 = test_pattern_suffix_rule()
+
+            print("\n=== 测试结果汇总 ===")
+            print(f"check 接口: {'[OK] 通过' if result1 else '[FAIL] 失败'}")
+            print(f"available-by-style 接口: {'[OK] 通过' if result2 else '[FAIL] 失败'}")
+            print(f"现有接口: {'[OK] 通过' if result3 else '[FAIL] 失败'}")
+            print(f"后缀规则测试: {'[OK] 通过' if result4 else '[FAIL] 失败'}")
+
+            if result1 and result2 and result3 and result4:
+                print("\n[SUCCESS] 所有测试通过！")
+            else:
+                print("\n[WARNING] 部分测试失败")
         else:
             print("【交互式测试模式】请根据提示输入\n")
             print("提示: 可以使用 --auto 参数进行自动测试\n")
@@ -284,11 +453,12 @@ if __name__ == "__main__":
                 print("  1. POST /api/restrictions/check (校验款式+位置+印花)")
                 print("  2. GET /api/restrictions/available-by-style (查询款式可用位置和印花)")
                 print("  3. 测试现有接口 (available-prints 和 available-positions)")
-                print("  4. 运行所有测试")
+                print("  4. 测试印花code后缀规则")
+                print("  5. 运行所有测试")
                 print("  0. 退出")
                 print("="*50)
 
-                choice = input("\n请输入选项 (0-4): ").strip()
+                choice = input("\n请输入选项 (0-5): ").strip()
 
                 if choice == "0":
                     print("退出测试")
@@ -300,16 +470,20 @@ if __name__ == "__main__":
                 elif choice == "3":
                     test_existing_apis()
                 elif choice == "4":
+                    test_pattern_suffix_rule()
+                elif choice == "5":
                     result1 = test_check_restriction()
                     result2 = test_available_by_style()
                     result3 = test_existing_apis()
+                    result4 = test_pattern_suffix_rule()
 
                     print("\n=== 测试结果 ===")
                     print(f"check 接口: {'[OK] 通过' if result1 else '[FAIL] 失败'}")
                     print(f"available-by-style 接口: {'[OK] 通过' if result2 else '[FAIL] 失败'}")
                     print(f"现有接口: {'[OK] 通过' if result3 else '[FAIL] 失败'}")
+                    print(f"后缀规则测试: {'[OK] 通过' if result4 else '[FAIL] 失败'}")
 
-                    if result1 and result2 and result3:
+                    if result1 and result2 and result3 and result4:
                         print("\n[SUCCESS] 所有测试通过！")
                     else:
                         print("\n[WARNING] 部分测试失败")

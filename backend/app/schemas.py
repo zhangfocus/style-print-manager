@@ -234,9 +234,9 @@ class StyleBanOut(StyleBanBase):
 # ───── Restriction Query Schemas ─────
 class RestrictionCheckRequest(BaseModel):
     """校验款式+位置+印花组合"""
-    style_id: int = Field(..., description="款式ID")
-    position_id: int = Field(..., description="位置ID")
-    print_id: int = Field(..., description="印花ID")
+    style_code: str = Field(..., description="款式编码")
+    position_name: str = Field(..., description="位置名称")
+    print_code: str = Field(..., description="印花编码")
 
 
 class RestrictionCheckResponse(BaseModel):
@@ -249,20 +249,35 @@ class RestrictionCheckResponse(BaseModel):
 
 class AvailablePositionWithPrints(BaseModel):
     """位置及其可用印花"""
-    position_id: int
     position_name: str
     position_code: str
-    print_ids: list[int] = Field(default_factory=list, description="可用印花ID列表")
     print_codes: list[str] = Field(default_factory=list, description="可用印花编码列表")
+    available: bool = Field(..., description="该位置是否有可用印花")
     is_restricted: bool = Field(..., description="是否受限定规则约束")
     reason: str = Field(..., description="限定原因说明")
 
 
 class AvailableByStyleResponse(BaseModel):
     """款式查询结果"""
-    style_id: int
+    style_code: str
     is_banned: bool = Field(..., description="款式是否被全禁")
     available_positions: list[AvailablePositionWithPrints] = Field(default_factory=list)
+
+
+class AvailablePrintsResponse(BaseModel):
+    """款式+位置查询可用印花结果"""
+    available: bool = Field(..., description="是否有可用印花")
+    print_codes: list[str] = Field(default_factory=list, description="可用印花编码列表")
+    is_restricted: bool = Field(..., description="是否受限定规则约束")
+    reason: str = Field(..., description="限定原因说明")
+
+
+class AvailablePositionsResponse(BaseModel):
+    """款式+印花查询可用位置结果"""
+    available: bool = Field(..., description="是否有可用位置")
+    position_names: list[str] = Field(default_factory=list, description="可用位置名称列表")
+    is_restricted: bool = Field(..., description="是否受限定规则约束")
+    reason: str = Field(..., description="限定原因说明")
 
 
 # ───── Excel Import Result ─────
