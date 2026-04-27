@@ -99,5 +99,6 @@ export interface ImportResult {
   details: {
     counts: Record<string, number>
     errors: string[]
+    warnings?: string[]
   }
 }

@@ -684,6 +684,8 @@ export default function RestrictionsPage() {
               <Select
                 mode="multiple"
                 showSearch
+                maxTagCount="responsive"
+                maxTagTextLength={18}
                 placeholder="选择允许的印花（留空=不限）"
                 options={printOptions}
                 loading={printSearching}
@@ -703,6 +705,8 @@ export default function RestrictionsPage() {
                 <Select
                   mode="multiple"
                   showSearch
+                  maxTagCount="responsive"
+                  maxTagTextLength={18}
                   placeholder="选择允许的印花（留空=不限）"
                   options={printOptions}
                   loading={printSearching}
@@ -718,6 +722,8 @@ export default function RestrictionsPage() {
                 <Select
                   mode="multiple"
                   showSearch
+                  maxTagCount="responsive"
+                  maxTagTextLength={18}
                   placeholder="选择允许的款式（留空=不限）"
                   options={styleOptions}
                   loading={styleSearching}

@@ -5,6 +5,7 @@ import {
 } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import type { TablePaginationConfig } from 'antd/es/table'
 import dayjs from 'dayjs'
 import type { Style } from '../types'
 import { listStyles, createStyle, updateStyle, deleteStyle } from '../api/styles'
@@ -17,12 +18,14 @@ export default function StylesPage() {
   const [editing, setEditing] = useState<Style | null>(null)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 })
 
-  const load = async (kw = keyword) => {
+  const load = async (kw = keyword, page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
-      const res = await listStyles(kw)
+      const res = await listStyles(kw, page, pageSize)
       setData(res.items)
+      setPagination({ current: res.page, pageSize: res.page_size, total: res.total })
     }
     catch (e: unknown) { message.error((e as Error).message) }
     finally { setLoading(false) }
@@ -112,15 +115,24 @@ export default function StylesPage() {
         placeholder="搜索白坯款式编码 / 商品款号 / 商品分类"
         allowClear
         style={{ width: 360, marginBottom: 16 }}
-        onSearch={kw => { setKeyword(kw); load(kw) }}
-        onChange={e => { if (!e.target.value) { setKeyword(''); load('') } }}
+        onSearch={kw => { setKeyword(kw); load(kw, 1, pagination.pageSize) }}
+        onChange={e => { if (!e.target.value) { setKeyword(''); load('', 1, pagination.pageSize) } }}
       />
       <Table
         rowKey="id"
         columns={columns}
         dataSource={data}
         loading={loading}
-        pagination={{ pageSize: 20, showTotal: t => `共 ${t} 条` }}
+        pagination={{
+          current: pagination.current,
+          pageSize: pagination.pageSize,
+          total: pagination.total,
+          showSizeChanger: true,
+          showTotal: t => `共 ${t} 条`,
+        }}
+        onChange={(next: TablePaginationConfig) => {
+          load(keyword, next.current || 1, next.pageSize || pagination.pageSize)
+        }}
         scroll={{ x: 1600 }}
         size="small"
       />
