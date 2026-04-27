@@ -102,12 +102,22 @@ def check_restriction(
     from .. import models
     from ..name_resolver import resolve_names_to_ids
 
+    # 步骤0: 检查特殊印花（纯色/自搭/福袋）直接放行
+    SPECIAL_PRINTS = {"纯色", "自搭", "福袋"}
+    if data.print_code in SPECIAL_PRINTS:
+        return schemas.RestrictionCheckResponse(
+            allowed=True,
+            reason="特殊印花无需校验",
+            rule_type=None,
+            rule_id=None
+        )
+
     # 转换名称为ID
     style_id, position_id, print_id = resolve_names_to_ids(
         data.style_code, data.position_name, data.print_code
     )
 
-    # 步骤0: 检查印花后缀规则（硬性全局规则）
+    # 步骤1: 检查印花后缀规则（硬性全局规则）
     position = db.query(models.Position).filter(models.Position.id == position_id).first()
     if position:
         try:
@@ -566,6 +576,14 @@ def get_available_positions(
     from .. import models
     from ..name_resolver import resolve_style_code, resolve_print_code
     from ..cache import name_cache
+
+    # 步骤0: 检查特殊印花（纯色/自搭/福袋）直接报错
+    SPECIAL_PRINTS = {"纯色", "自搭", "福袋"}
+    if print_code in SPECIAL_PRINTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"特殊印花（{print_code}）无贴图位置"
+        )
 
     # 转换名称为ID
     style_id = resolve_style_code(style_code)

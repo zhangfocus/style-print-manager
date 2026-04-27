@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "requests>=2.33.1",
     "apscheduler>=3.10.0",
+    "loguru>=0.7.3",
 ]
 
 [build-system]
