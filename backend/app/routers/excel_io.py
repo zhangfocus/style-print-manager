@@ -284,9 +284,14 @@ def _import_restrictions(ws, db: Session):
     3. style_position (类型3): 款式列有值 + 位置列有值
 
     处理逻辑：
-    - 使用 pandas 读取 Excel，处理合并单元格
-    - 款式列使用 ffill() 向下填充（用于类型1和类型3）
+    - 使用 pandas 读取 Excel
+    - 读取真实合并单元格区域，仅类型3的款式合并行继承合并区域首行款式
+    - 保存原始款式列的空值标记，用于区分类型2和类型3
+    - 先分类解析，再按类型1 -> 类型2 -> 类型3强制导入
+    - 类型3若与已成功导入的类型2存在相同款式+位置，则跳过
+    - 列表字段部分编码不存在时，保留有效编码继续导入，并记录错误
     - 全量替换：先清空所有规则，再导入新数据
+    - 自动过滤特殊印花（纯色/自搭/福袋）
     """
     # 1. 提取数据到 pandas DataFrame
     headers = [cell.value for cell in ws[1]]
@@ -306,9 +311,12 @@ def _import_restrictions(ws, db: Session):
     }
 
     # 尝试匹配列名（支持带*的列名）
+    style_col_idx = None
     for col in df.columns:
         clean_col = col.rstrip("*").strip()
         if clean_col in col_map:
+            if col_map[clean_col] == "style":
+                style_col_idx = list(df.columns).index(col) + 1
             df.rename(columns={col: col_map[clean_col]}, inplace=True)
 
     # 确保必要的列存在
@@ -320,17 +328,61 @@ def _import_restrictions(ws, db: Session):
     if "limit_styles" not in df.columns:
         df["limit_styles"] = None
 
-    # 3. 处理合并单元格：款式列向下填充
-    df["style"] = df["style"].ffill()
+    # 3. 保存原始款式列的空值标记（用于区分类型2和类型3）
+    # 空值包括：None, NaN, 空字符串
+    df["_original_style_empty"] = df["style"].isna() | (df["style"].fillna("").astype(str).str.strip() == "")
 
-    # 4. 清空现有规则（全量替换）
-    db.query(models.StylePositionRule).delete()
-    db.commit()
+    # 4. 处理真实合并单元格：只有款式列落在合并区域内的行才继承款式
+    merged_style_by_row = {}
+    if style_col_idx:
+        for merged_range in ws.merged_cells.ranges:
+            if merged_range.min_col <= style_col_idx <= merged_range.max_col:
+                merged_style = ws.cell(merged_range.min_row, style_col_idx).value
+                for excel_row in range(merged_range.min_row, merged_range.max_row + 1):
+                    if excel_row >= 2:
+                        merged_style_by_row[excel_row] = merged_style
+    df["_merged_style"] = [merged_style_by_row.get(i + 2) for i in range(len(df))]
 
-    # 5. 解析并导入规则
-    type1_count, type2_count, type3_count = 0, 0, 0
+    # 5. 先解析分类，再按类型1 -> 类型2 -> 类型3强制导入
+    type1_rules = []
+    type2_rules = []
+    type3_rules = []
+    filtered_count = 0  # 被过滤的特殊印花记录数
+    skipped_duplicate_count = 0  # 被类型2覆盖或自身重复的类型3记录数
     errors = []
-    current_style = None  # 跟踪当前款式（用于类型1和类型3）
+
+    def _append_missing_error(row_num: int, label: str, missing_codes: list[str]):
+        if not missing_codes:
+            return
+        preview = "、".join(missing_codes[:5])
+        suffix = f" 等{len(missing_codes)}个" if len(missing_codes) > 5 else ""
+        errors.append(f"第{row_num}行：{label}不存在：{preview}{suffix}")
+
+    def _filter_existing_prints(row_num: int, print_codes: list[str] | None):
+        if not print_codes:
+            return None
+        existing = []
+        missing = []
+        for code in print_codes:
+            if crud.get_print_by_code(db, code):
+                existing.append(code)
+            else:
+                missing.append(code)
+        _append_missing_error(row_num, "印花编码", missing)
+        return existing or None
+
+    def _filter_existing_styles(row_num: int, style_codes: list[str] | None):
+        if not style_codes:
+            return None
+        existing = []
+        missing = []
+        for code in style_codes:
+            if crud.get_style_by_code(db, code):
+                existing.append(code)
+            else:
+                missing.append(code)
+        _append_missing_error(row_num, "款式编码", missing)
+        return existing or None
 
     for idx, row in df.iterrows():
         row_num = idx + 2  # Excel 行号（从2开始）
@@ -340,21 +392,36 @@ def _import_restrictions(ws, db: Session):
         position_name = _str(row.get("position"))
         print_codes_str = _str(row.get("print"))
         limit_styles_str = _str(row.get("limit_styles"))
+        original_style_empty = row.get("_original_style_empty", False)
+        merged_style_code = _str(row.get("_merged_style"))
+        is_style_merged_row = bool(merged_style_code)
+        effective_style_code = merged_style_code if original_style_empty and is_style_merged_row else style_code
 
         # 跳过完全空行
-        if not any([style_code, position_name, print_codes_str, limit_styles_str]):
+        if not any([effective_style_code, position_name, print_codes_str, limit_styles_str]):
             continue
 
-        # 更新当前款式
-        if style_code:
-            current_style = style_code
-
-        # 判断规则类型并创建规则
+        # 判断规则类型并分类
         try:
-            # 类型2: position_restriction（款式列为空 + 位置有值）
-            if not style_code and position_name:
+            # 类型1: style_ban（原始款式列有值 + 位置为空 + 印花为空）
+            if not original_style_empty and effective_style_code and not position_name and not print_codes_str:
+                type1_rules.append((row_num, schemas.StylePositionRuleCreate(
+                    rule_type=1,
+                    position_code=None,
+                    style_codes=[effective_style_code],
+                    print_codes=None,
+                    is_active=True
+                )))
+
+            # 类型2: position_restriction（原始款式列为空，且不在款式合并区域内 + 位置有值）
+            elif original_style_empty and not is_style_merged_row and position_name:
                 print_codes = _parse_code_list(print_codes_str)
                 limit_style_codes = _parse_code_list(limit_styles_str)
+
+                # 检查是否被过滤（印花全是特殊印花）
+                if print_codes_str and not print_codes:
+                    filtered_count += 1
+                    continue
 
                 # 类型2要求至少有一个维度有值
                 if not print_codes and not limit_style_codes:
@@ -367,35 +434,23 @@ def _import_restrictions(ws, db: Session):
                     errors.append(f"第{row_num}行：位置 '{position_name}' 不存在")
                     continue
 
-                rule_data = schemas.StylePositionRuleCreate(
+                print_codes = _filter_existing_prints(row_num, print_codes)
+                limit_style_codes = _filter_existing_styles(row_num, limit_style_codes)
+                if not print_codes and not limit_style_codes:
+                    errors.append(f"第{row_num}行：位置限定规则过滤无效编码后为空")
+                    continue
+
+                type2_rules.append((row_num, schemas.StylePositionRuleCreate(
                     rule_type=2,
                     position_code=position.code,  # 使用位置编码
                     style_codes=limit_style_codes,
                     print_codes=print_codes,
                     is_active=True
-                )
-                crud.create_style_position_rule(db, rule_data)
-                type2_count += 1
+                )))
 
-            # 类型1: style_ban（款式列有值 + 位置为空 + 印花为空）
-            elif style_code and not position_name and not print_codes_str:
-                if not current_style:
-                    errors.append(f"第{row_num}行：款式全禁规则缺少款式编码")
-                    continue
-
-                rule_data = schemas.StylePositionRuleCreate(
-                    rule_type=1,
-                    position_code=None,
-                    style_codes=[current_style],
-                    print_codes=None,
-                    is_active=True
-                )
-                crud.create_style_position_rule(db, rule_data)
-                type1_count += 1
-
-            # 类型3: style_position（款式列有值 + 位置有值）
-            elif style_code and position_name:
-                if not current_style:
+            # 类型3: style_position（原始款式列有值或处于款式合并区域内 + 位置有值）
+            elif effective_style_code and (not original_style_empty or is_style_merged_row) and position_name:
+                if not effective_style_code:
                     errors.append(f"第{row_num}行：款式位置规则缺少款式编码")
                     continue
 
@@ -407,15 +462,24 @@ def _import_restrictions(ws, db: Session):
 
                 print_codes = _parse_code_list(print_codes_str)
 
-                rule_data = schemas.StylePositionRuleCreate(
+                # 检查是否被过滤（印花全是特殊印花）
+                if print_codes_str and not print_codes:
+                    filtered_count += 1
+                    continue
+
+                original_print_codes = print_codes
+                print_codes = _filter_existing_prints(row_num, print_codes)
+                if original_print_codes and not print_codes:
+                    errors.append(f"第{row_num}行：款式位置规则过滤无效印花后为空")
+                    continue
+
+                type3_rules.append((row_num, schemas.StylePositionRuleCreate(
                     rule_type=3,
                     position_code=position.code,  # 使用位置编码
-                    style_codes=[current_style],
+                    style_codes=[effective_style_code],
                     print_codes=print_codes,  # None 表示不限印花
                     is_active=True
-                )
-                crud.create_style_position_rule(db, rule_data)
-                type3_count += 1
+                )))
 
             else:
                 # 无法识别的规则类型
@@ -423,11 +487,57 @@ def _import_restrictions(ws, db: Session):
 
         except Exception as e:
             errors.append(f"第{row_num}行处理失败: {e}")
-            if len(errors) >= 50:
-                break
+            continue
+
+    # 6. 清空现有规则（全量替换）
+    db.query(models.StylePositionRule).delete()
+    db.commit()
+
+    # 7. 按类型1 -> 类型2 -> 类型3导入，类型2覆盖同款式+位置的类型3
+    type1_count, type2_count, type3_count = 0, 0, 0
+    type2_style_position_keys = set()
+    seen_type3_keys = set()
+
+    for row_num, rule_data in type1_rules:
+        try:
+            crud.create_style_position_rule(db, rule_data)
+            type1_count += 1
+        except Exception as e:
+            errors.append(f"第{row_num}行处理失败: {e}")
+
+    for row_num, rule_data in type2_rules:
+        try:
+            crud.create_style_position_rule(db, rule_data)
+            type2_count += 1
+            for style_code in rule_data.style_codes or []:
+                type2_style_position_keys.add((style_code, rule_data.position_code))
+        except Exception as e:
+            errors.append(f"第{row_num}行处理失败: {e}")
+
+    for row_num, rule_data in type3_rules:
+        style_code = rule_data.style_codes[0] if rule_data.style_codes else None
+        if (style_code, rule_data.position_code) in type2_style_position_keys:
+            skipped_duplicate_count += 1
+            continue
+
+        type3_key = (
+            style_code,
+            rule_data.position_code,
+            tuple(rule_data.print_codes or []),
+        )
+        if type3_key in seen_type3_keys:
+            skipped_duplicate_count += 1
+            continue
+        seen_type3_keys.add(type3_key)
+
+        try:
+            crud.create_style_position_rule(db, rule_data)
+            type3_count += 1
+        except Exception as e:
+            errors.append(f"第{row_num}行处理失败: {e}")
 
     total_count = type1_count + type2_count + type3_count
-    return total_count, errors
+    return total_count, errors, filtered_count, skipped_duplicate_count
 
 
 def _result(label: str, count: int, errors: list) -> schemas.ImportResult:
@@ -515,8 +625,29 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
         raise HTTPException(400, "请上传 .xlsx 或 .xls 文件")
     wb = _parse_wb(await file.read(), file.filename)
     ws = _first_sheet(wb, file.filename)
-    count, errors = _import_restrictions(ws, db)
-    return _result("限定", count, errors)
+    count, errors, filtered_count, skipped_duplicate_count = _import_restrictions(ws, db)
+
+    # 构造返回消息
+    msg = f"导入完成：限定 {count} 条"
+    if filtered_count > 0:
+        msg += f"；已过滤 {filtered_count} 条特殊印花记录（纯色/自搭/福袋）"
+    if skipped_duplicate_count > 0:
+        msg += f"；已跳过 {skipped_duplicate_count} 条重复类型3记录"
+    if errors:
+        msg += f"；有 {len(errors)} 条错误"
+
+    return schemas.ImportResult(
+        success=len(errors) == 0,
+        message=msg,
+        details={
+            "counts": {
+                "限定": count,
+                "filtered": filtered_count,
+                "skipped_duplicate": skipped_duplicate_count,
+            },
+            "errors": errors[:5],
+        },
+    )
 
 
 # ── 分模块模版下载 ─────────────────────────────────────

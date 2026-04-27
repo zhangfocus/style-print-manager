@@ -242,18 +242,7 @@ def create_style_position_rule(db: Session, data: schemas.StylePositionRuleCreat
         print_id_list = sorted(set(print_id_list), key=int)
         print_ids = ",".join(print_id_list)
 
-    # 4. 创建规则前的额外校验
-    # 类型3不能与类型2位置冲突
-    if data.rule_type == 3 and position_id:
-        existing_type2 = db.query(models.StylePositionRule).filter(
-            models.StylePositionRule.rule_type == 2,
-            models.StylePositionRule.position_id == position_id,
-            models.StylePositionRule.is_active == True
-        ).first()
-        if existing_type2:
-            raise ValueError(f"位置 '{data.position_code}' 已有位置限定规则（类型2），不能创建款式位置规则（类型3）")
-
-    # 5. 创建规则
+    # 4. 创建规则
     obj = models.StylePositionRule(
         rule_type=data.rule_type,
         position_id=position_id,
