@@ -20,6 +20,7 @@ export const importEntity = (entity: EntityKey, file: File): Promise<ImportResul
   return client
     .post<ImportResult>(`/excel/import/${entity}`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
     })
     .then(r => r.data)
 }

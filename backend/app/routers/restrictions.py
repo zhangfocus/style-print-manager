@@ -750,6 +750,8 @@ def create_rule(data: schemas.StylePositionRuleCreate, db: Session = Depends(get
 @router.put("/{rule_id}")
 def update_rule(rule_id: int, data: schemas.StylePositionRuleUpdate, db: Session = Depends(get_db)):
     try:
+        from .. import models
+
         # 获取现有规则
         existing_rule = db.query(models.StylePositionRule).filter(
             models.StylePositionRule.id == rule_id

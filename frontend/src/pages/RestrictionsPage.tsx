@@ -202,6 +202,13 @@ export default function RestrictionsPage() {
           return [...prev, ...newPrints]
         })
       }
+
+      if (r.position) {
+        setPositions(prev => {
+          if (prev.some(p => p.id === r.position!.id)) return prev
+          return [...prev, r.position!]
+        })
+      }
     } catch (e: unknown) {
       message.error((e as Error).message)
     }
@@ -209,7 +216,7 @@ export default function RestrictionsPage() {
     ruleForm.setFieldsValue({
       rule_type: r.rule_type,
       position_id: r.position_id,
-      style_ids: styleIds,
+      style_ids: r.rule_type === 2 ? styleIds : styleIds[0],
       print_ids: printIds,
       is_active: r.is_active,
     })

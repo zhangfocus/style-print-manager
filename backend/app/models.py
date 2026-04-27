@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Float, Text, UniqueConstraint, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Float, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -116,9 +116,7 @@ class StylePositionRule(Base):
     # 关系
     position = relationship("Position")
 
-    # 唯一性约束和索引
+    # 索引
     __table_args__ = (
-        UniqueConstraint('rule_type', 'position_id', 'style_ids', 'print_ids',
-                        name='uq_rule_position_styles_prints'),
         Index('idx_rule_type_position', 'rule_type', 'position_id'),
     )

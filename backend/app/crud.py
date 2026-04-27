@@ -204,9 +204,42 @@ def get_style_position_rule(db: Session, rule_id: int):
     ).filter(models.StylePositionRule.id == rule_id).first()
 
 
+def _parse_id_csv(value: Optional[str]) -> Optional[set[int]]:
+    if not value:
+        return None
+    ids = {int(item.strip()) for item in value.split(',') if item.strip()}
+    return ids or None
+
+
+def _format_id_csv(ids: Optional[set[int]]) -> Optional[str]:
+    if ids is None:
+        return None
+    return ",".join(str(item) for item in sorted(ids)) or None
+
+
+def _merge_nullable_id_csv(existing: Optional[str], incoming: Optional[str]) -> Optional[str]:
+    # NULL means unrestricted. If either side is unrestricted, keep it unrestricted.
+    existing_ids = _parse_id_csv(existing)
+    incoming_ids = _parse_id_csv(incoming)
+    if existing_ids is None or incoming_ids is None:
+        return None
+    return _format_id_csv(existing_ids | incoming_ids)
+
+
+def _append_id_csv(existing: Optional[str], incoming: Optional[str]) -> Optional[str]:
+    # For adding to an existing rule, an empty incoming list means "nothing new".
+    incoming_ids = _parse_id_csv(incoming)
+    if incoming_ids is None:
+        return existing
+    existing_ids = _parse_id_csv(existing)
+    if existing_ids is None:
+        return None
+    return _format_id_csv(existing_ids | incoming_ids)
+
+
 def create_style_position_rule(db: Session, data: schemas.StylePositionRuleCreate):
     """
-    创建规则：将 code 转换为 id
+    创建规则：将 code 转换为 id；已存在的同维度规则会合并，避免重复规则生效不确定。
     """
     # 1. 转换 position_code 为 position_id
     position_id = None
@@ -242,7 +275,54 @@ def create_style_position_rule(db: Session, data: schemas.StylePositionRuleCreat
         print_id_list = sorted(set(print_id_list), key=int)
         print_ids = ",".join(print_id_list)
 
-    # 4. 创建规则
+    # 4. 已存在同维度规则时合并，避免同一位置/款式生成多条规则。
+    if data.rule_type == 2:
+        existing_rules = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 2,
+            models.StylePositionRule.position_id == position_id,
+        ).order_by(models.StylePositionRule.id).all()
+
+        if existing_rules:
+            obj = existing_rules[0]
+            for duplicate in existing_rules[1:]:
+                obj.style_ids = _merge_nullable_id_csv(obj.style_ids, duplicate.style_ids)
+                obj.print_ids = _merge_nullable_id_csv(obj.print_ids, duplicate.print_ids)
+                db.delete(duplicate)
+
+            obj.style_ids = _append_id_csv(obj.style_ids, style_ids)
+            obj.print_ids = _append_id_csv(obj.print_ids, print_ids)
+            obj.is_active = data.is_active
+            db.commit()
+            db.refresh(obj)
+            return obj
+
+    if data.rule_type == 3:
+        existing_rule = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 3,
+            models.StylePositionRule.position_id == position_id,
+            models.StylePositionRule.style_ids == style_ids,
+        ).first()
+
+        if existing_rule:
+            existing_rule.print_ids = _merge_nullable_id_csv(existing_rule.print_ids, print_ids)
+            existing_rule.is_active = data.is_active
+            db.commit()
+            db.refresh(existing_rule)
+            return existing_rule
+
+    if data.rule_type == 1:
+        existing_rule = db.query(models.StylePositionRule).filter(
+            models.StylePositionRule.rule_type == 1,
+            models.StylePositionRule.style_ids == style_ids,
+        ).first()
+
+        if existing_rule:
+            existing_rule.is_active = data.is_active
+            db.commit()
+            db.refresh(existing_rule)
+            return existing_rule
+
+    # 5. 创建规则
     obj = models.StylePositionRule(
         rule_type=data.rule_type,
         position_id=position_id,

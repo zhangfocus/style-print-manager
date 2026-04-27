@@ -31,7 +31,7 @@ def test_import(excel_path: str):
         print("\n开始导入...")
         db = SessionLocal()
         try:
-            count, errors, filtered_count, skipped_duplicate_count = _import_restrictions(ws, db)
+            count, errors, filtered_count, skipped_duplicate_count, warnings = _import_restrictions(ws, db)
             print(f"\n导入完成！")
             print(f"成功导入: {count} 条规则")
             print(f"过滤特殊印花: {filtered_count} 条")
@@ -45,6 +45,13 @@ def test_import(excel_path: str):
                     print(f"  ... 还有 {len(errors) - 5} 条错误")
             else:
                 print("\n没有错误！")
+
+            if warnings:
+                print(f"\n提示信息 ({len(warnings)} 条):")
+                for warning in warnings[:5]:
+                    print(f"  - {warning}")
+                if len(warnings) > 5:
+                    print(f"  ... 还有 {len(warnings) - 5} 条提示")
 
         finally:
             db.close()

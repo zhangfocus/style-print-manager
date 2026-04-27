@@ -1,6 +1,7 @@
 import io
 import json
 import datetime
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
@@ -53,6 +54,30 @@ def _excel_date(val):
         return None
 
 
+def _optional_int(val, warnings: list[str], row_idx: int, field: str):
+    if val is None:
+        return None
+    if pd.isna(val):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        warnings.append(f"第{row_idx}行：{field}不是有效数字，已留空")
+        return None
+
+
+def _optional_float(val, warnings: list[str], row_idx: int, field: str):
+    if val is None:
+        return None
+    if pd.isna(val):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        warnings.append(f"第{row_idx}行：{field}不是有效数字，已留空")
+        return None
+
+
 def _str(v):
     if v is None:
         return None
@@ -65,7 +90,10 @@ def _str(v):
 
 def _header_key(v):
     s = _str(v)
-    return s.rstrip("*").strip() if s else None
+    if not s:
+        return None
+    s = re.split(r"[\n(（]", s, maxsplit=1)[0]
+    return re.sub(r"\s+", "", s).rstrip("*").strip()
 
 
 def _header_index(headers, *names):
@@ -146,7 +174,7 @@ def _import_styles(ws, db: Session):
                 brand_attr=_str(col(row, "品牌属性")),
                 attr=_str(col(row, "属性")),
                 fabric_type=_str(col(row, "面料种类")),
-                year=int(col(row, "年份")) if col(row, "年份") is not None else None,
+                year=_optional_int(col(row, "年份"), stats["warnings"], row_idx, "年份"),
                 gender=_str(col(row, "性别")),
                 season=_str(col(row, "季节")),
                 category=_str(col(row, "类目")),
@@ -165,10 +193,10 @@ def _import_styles(ws, db: Session):
                 hot_wind_composition=_str(col(row, "热风成分")),
                 fabric_name=_str(col(row, "面料名称")),
                 fabric_weight=_str(col(row, "面料克重")),
-                blank_weight=float(col(row, "白坯重量")) if col(row, "白坯重量") is not None else None,
+                blank_weight=_optional_float(col(row, "白坯重量"), stats["warnings"], row_idx, "白坯重量"),
                 dev_date=_excel_date(col(row, "开发时间")),
-                tag_price=float(col(row, "吊牌价")) if col(row, "吊牌价") is not None else None,
-                premium_tag_price=float(col(row, "高价品牌吊牌价")) if col(row, "高价品牌吊牌价") is not None else None,
+                tag_price=_optional_float(col(row, "吊牌价"), stats["warnings"], row_idx, "吊牌价"),
+                premium_tag_price=_optional_float(col(row, "高价品牌吊牌价"), stats["warnings"], row_idx, "高价品牌吊牌价"),
                 exec_standard=_str(col(row, "执行标准")),
                 safety_category=_str(col(row, "安全技术类别")),
                 product_type=_str(col(row, "产品分类")),
@@ -183,8 +211,6 @@ def _import_styles(ws, db: Session):
             count += 1
         except Exception as e:
             errors.append(f"第{row_idx}行处理失败: {e}")
-            if len(errors) >= 20:
-                break
     return count, errors, stats
 
 
@@ -192,10 +218,15 @@ def _import_prints(ws, db: Session):
     """支持原始印花.xlsx格式（按列名匹配）和模板格式"""
     headers = [cell.value for cell in ws[1]]
     _require_headers(headers, {"商品编码": ("商品编码",), "图案名称": ("图案名称",)})
+    header_keys = [_header_key(header) for header in headers]
+    is_extended_print_sheet = len(header_keys) >= 15 and header_keys[5] == "真维斯款号" and header_keys[6] == "替换的印花编码"
 
     def col(row_vals, *names):
         idx = _header_index(headers, *names)
         return row_vals[idx] if idx is not None and idx < len(row_vals) else None
+
+    def col_at(row_vals, idx):
+        return row_vals[idx - 1] if idx - 1 < len(row_vals) else None
 
     count, errors = 0, []
     stats = {"created": 0, "updated": 0, "skipped": 0, "warnings": []}
@@ -224,16 +255,16 @@ def _import_prints(ws, db: Session):
                 pattern_size=_str(col(row, "图案大小")),
                 pattern_spec=_str(col(row, "图案规格")),
                 craft_attr=_str(col(row, "工艺属性")),
-                zwx_style_code=_str(col(row, "真维斯款号")),
-                zwx_replace_code=_str(col(row, "真维斯替换编码")),
-                zwx_replace_style=_str(col(row, "真维斯替换款号")),
-                jwco_style_code=_str(col(row, "JWCO款号")),
-                jwco_replace_code=_str(col(row, "JWCO替换编码")),
-                jwco_replace_style=_str(col(row, "JWCO替换款号")),
-                city_style_code=_str(col(row, "CITY款号")),
-                city_replace_code=_str(col(row, "CITY替换编码")),
-                city_replace_style=_str(col(row, "CITY替换款号")),
-                tangshi_style_code=_str(col(row, "唐狮款号")),
+                zwx_style_code=_str(col_at(row, 6) if is_extended_print_sheet else col(row, "真维斯款号")),
+                zwx_replace_code=_str(col_at(row, 7) if is_extended_print_sheet else col(row, "真维斯替换编码")),
+                zwx_replace_style=_str(col_at(row, 8) if is_extended_print_sheet else col(row, "真维斯替换款号")),
+                jwco_style_code=_str(col_at(row, 9) if is_extended_print_sheet else col(row, "JWCO款号")),
+                jwco_replace_code=_str(col_at(row, 10) if is_extended_print_sheet else col(row, "JWCO替换编码")),
+                jwco_replace_style=_str(col_at(row, 11) if is_extended_print_sheet else col(row, "JWCO替换款号")),
+                city_style_code=_str(col_at(row, 12) if is_extended_print_sheet else col(row, "CITY款号", "city款号")),
+                city_replace_code=_str(col_at(row, 13) if is_extended_print_sheet else col(row, "CITY替换编码", "city替换编码")),
+                city_replace_style=_str(col_at(row, 14) if is_extended_print_sheet else col(row, "CITY替换款号", "city替换款号")),
+                tangshi_style_code=_str(col_at(row, 15) if is_extended_print_sheet else col(row, "唐狮款号")),
                 description=_str(col(row, "备注")),
             )
             existing = crud.get_print_by_code(db, code)
@@ -246,8 +277,6 @@ def _import_prints(ws, db: Session):
             count += 1
         except Exception as e:
             errors.append(f"第{row_idx}行处理失败: {e}")
-            if len(errors) >= 20:
-                break
     return count, errors, stats
 
 
@@ -398,8 +427,8 @@ def _import_restrictions(ws, db: Session):
     headers = [cell.value for cell in ws[1]]
     _require_headers(headers, {
         "款式": ("款式", "白坯款式编码"),
-        "位置": ("位置", "位置名称"),
-        "印花": ("印花", "印花（逗号分隔，空=不限）", "允许印花编码(逗号分隔，留空=不限)"),
+        "位置": ("位置", "位置名称", "可贴图位置"),
+        "印花": ("印花", "印花（逗号分隔，空=不限）", "允许印花编码(逗号分隔，留空=不限)", "可贴的印花编码"),
         "限定款式": ("限定款式", "限定款式（逗号分隔）"),
     })
     data = []
@@ -415,9 +444,11 @@ def _import_restrictions(ws, db: Session):
         "白坯款式编码": "style",
         "位置": "position",
         "位置名称": "position",
+        "可贴图位置": "position",
         "印花": "print",
         "印花（逗号分隔，空=不限）": "print",
         "允许印花编码(逗号分隔，留空=不限)": "print",
+        "可贴的印花编码": "print",
         "限定款式": "limit_styles",
         "限定款式（逗号分隔）": "limit_styles"
     }
@@ -425,7 +456,7 @@ def _import_restrictions(ws, db: Session):
     # 尝试匹配列名（支持带*的列名）
     style_col_idx = None
     for col in df.columns:
-        clean_col = col.rstrip("*").strip()
+        clean_col = _header_key(col)
         if clean_col in col_map:
             if col_map[clean_col] == "style":
                 style_col_idx = list(df.columns).index(col) + 1
@@ -462,6 +493,7 @@ def _import_restrictions(ws, db: Session):
     filtered_count = 0  # 被过滤的特殊印花记录数
     skipped_duplicate_count = 0  # 被类型2覆盖或自身重复的类型3记录数
     errors = []
+    warnings = []
 
     def _append_missing_error(row_num: int, label: str, missing_codes: list[str]):
         if not missing_codes:
@@ -470,29 +502,45 @@ def _import_restrictions(ws, db: Session):
         suffix = f" 等{len(missing_codes)}个" if len(missing_codes) > 5 else ""
         errors.append(f"第{row_num}行：{label}不存在：{preview}{suffix}")
 
+    def _append_missing_warning(row_num: int, label: str, missing_codes: list[str]):
+        if not missing_codes:
+            return
+        preview = "、".join(missing_codes[:5])
+        suffix = f" 等{len(missing_codes)}个" if len(missing_codes) > 5 else ""
+        warnings.append(f"第{row_num}行：{label}不存在，已忽略：{preview}{suffix}")
+
+    styles_by_code = {style.code: style for style in db.query(models.Style).all()}
+    prints_by_code = {print_obj.code: print_obj for print_obj in db.query(models.Print).all()}
+    all_positions = db.query(models.Position).all()
+    positions_by_name = {position.name: position for position in all_positions}
+    positions_by_code = {position.code: position for position in all_positions}
+
     def _validate_existing_prints(row_num: int, print_codes: list[str] | None):
         if not print_codes:
             return None
-        missing = []
+        valid, missing = [], []
         for code in print_codes:
-            if crud.get_print_by_code(db, code):
-                continue
+            if code in prints_by_code:
+                valid.append(code)
             else:
                 missing.append(code)
-        _append_missing_error(row_num, "印花编码", missing)
-        return print_codes if not missing else None
+        _append_missing_warning(row_num, "印花编码", missing)
+        return valid or None
 
-    def _validate_existing_styles(row_num: int, style_codes: list[str] | None):
+    def _validate_existing_styles(row_num: int, style_codes: list[str] | None, strict: bool = True):
         if not style_codes:
             return None
-        missing = []
+        valid, missing = [], []
         for code in style_codes:
-            if crud.get_style_by_code(db, code):
-                continue
+            if code in styles_by_code:
+                valid.append(code)
             else:
                 missing.append(code)
-        _append_missing_error(row_num, "款式编码", missing)
-        return style_codes if not missing else None
+        if strict:
+            _append_missing_warning(row_num, "款式编码", missing)
+            return valid if not missing else None
+        _append_missing_warning(row_num, "款式编码", missing)
+        return valid or None
 
     for idx, row in df.iterrows():
         row_num = idx + 2  # Excel 行号（从2开始）
@@ -541,17 +589,17 @@ def _import_restrictions(ws, db: Session):
                     continue
 
                 # 通过位置名称查找位置编码
-                position = crud.get_position_by_name(db, position_name)
+                position = positions_by_name.get(position_name)
                 if not position:
-                    errors.append(f"第{row_num}行：位置 '{position_name}' 不存在")
+                    warnings.append(f"第{row_num}行：位置 '{position_name}' 不存在，已跳过")
                     continue
 
                 print_codes = _validate_existing_prints(row_num, print_codes)
-                limit_style_codes = _validate_existing_styles(row_num, limit_style_codes)
+                limit_style_codes = _validate_existing_styles(row_num, limit_style_codes, strict=False)
                 if errors and any(error.startswith(f"第{row_num}行：") for error in errors):
                     continue
                 if not print_codes and not limit_style_codes:
-                    errors.append(f"第{row_num}行：位置限定规则过滤无效编码后为空")
+                    warnings.append(f"第{row_num}行：位置限定规则过滤无效编码后为空，已跳过")
                     continue
 
                 type2_rules.append((row_num, schemas.StylePositionRuleCreate(
@@ -571,9 +619,9 @@ def _import_restrictions(ws, db: Session):
                     continue
 
                 # 通过位置名称查找位置编码
-                position = crud.get_position_by_name(db, position_name)
+                position = positions_by_name.get(position_name)
                 if not position:
-                    errors.append(f"第{row_num}行：位置 '{position_name}' 不存在")
+                    warnings.append(f"第{row_num}行：位置 '{position_name}' 不存在，已跳过")
                     continue
 
                 print_codes = _parse_code_list(print_codes_str)
@@ -584,7 +632,8 @@ def _import_restrictions(ws, db: Session):
                     continue
 
                 print_codes = _validate_existing_prints(row_num, print_codes)
-                if print_codes_str and any(error.startswith(f"第{row_num}行：印花编码不存在") for error in errors):
+                if print_codes_str and not print_codes:
+                    warnings.append(f"第{row_num}行：款式位置规则过滤无效印花后为空，已跳过")
                     continue
 
                 type3_rules.append((row_num, schemas.StylePositionRuleCreate(
@@ -597,7 +646,7 @@ def _import_restrictions(ws, db: Session):
 
             else:
                 # 无法识别的规则类型
-                errors.append(f"第{row_num}行：无法识别规则类型（款式={style_code}, 位置={position_name}）")
+                warnings.append(f"第{row_num}行：无法识别规则类型（款式={style_code}, 位置={position_name}），已跳过")
 
         except Exception as e:
             errors.append(f"第{row_num}行处理失败: {e}")
@@ -605,7 +654,11 @@ def _import_restrictions(ws, db: Session):
 
     # 6. 有解析/引用错误时不替换旧规则
     if errors:
-        return 0, errors, filtered_count, skipped_duplicate_count
+        return 0, errors, filtered_count, skipped_duplicate_count, warnings
+
+    if not any([type1_rules, type2_rules, type3_rules]):
+        errors.append("没有可导入的有效限定规则，已保留原规则")
+        return 0, errors, filtered_count, skipped_duplicate_count, warnings
 
     # 7. 清空现有规则（全量替换）
     db.query(models.StylePositionRule).delete()
@@ -617,6 +670,30 @@ def _import_restrictions(ws, db: Session):
     seen_type2_keys = set()
     type2_style_position_keys = set()
     seen_type3_keys = set()
+    type2_by_position: dict[str, models.StylePositionRule] = {}
+    type3_by_style_position: dict[tuple[str, str], models.StylePositionRule] = {}
+
+    def _codes_to_id_csv(codes: list[str] | None, lookup: dict[str, object]):
+        if not codes:
+            return None
+        ids = sorted({lookup[code].id for code in codes if code in lookup})
+        return ",".join(str(item) for item in ids) or None
+
+    def _merge_rule_csv(existing: str | None, incoming: str | None):
+        if not incoming:
+            return existing
+        if not existing:
+            return None
+        merged = {int(item.strip()) for item in existing.split(',') if item.strip()}
+        merged.update(int(item.strip()) for item in incoming.split(',') if item.strip())
+        return ",".join(str(item) for item in sorted(merged)) or None
+
+    def _merge_nullable_rule_csv(existing: str | None, incoming: str | None):
+        if not existing or not incoming:
+            return None
+        merged = {int(item.strip()) for item in existing.split(',') if item.strip()}
+        merged.update(int(item.strip()) for item in incoming.split(',') if item.strip())
+        return ",".join(str(item) for item in sorted(merged)) or None
 
     for row_num, rule_data in type1_rules:
         type1_key = tuple(rule_data.style_codes or [])
@@ -625,7 +702,13 @@ def _import_restrictions(ws, db: Session):
             continue
         seen_type1_keys.add(type1_key)
         try:
-            crud.create_style_position_rule(db, rule_data)
+            db.add(models.StylePositionRule(
+                rule_type=1,
+                position_id=None,
+                style_ids=_codes_to_id_csv(rule_data.style_codes, styles_by_code),
+                print_ids=None,
+                is_active=rule_data.is_active,
+            ))
             type1_count += 1
         except Exception as e:
             errors.append(f"第{row_num}行处理失败: {e}")
@@ -641,7 +724,23 @@ def _import_restrictions(ws, db: Session):
             continue
         seen_type2_keys.add(type2_key)
         try:
-            crud.create_style_position_rule(db, rule_data)
+            style_ids = _codes_to_id_csv(rule_data.style_codes, styles_by_code)
+            print_ids = _codes_to_id_csv(rule_data.print_codes, prints_by_code)
+            existing = type2_by_position.get(rule_data.position_code)
+            if existing:
+                existing.style_ids = _merge_rule_csv(existing.style_ids, style_ids)
+                existing.print_ids = _merge_rule_csv(existing.print_ids, print_ids)
+            else:
+                position = positions_by_code.get(rule_data.position_code)
+                obj = models.StylePositionRule(
+                    rule_type=2,
+                    position_id=position.id if position else None,
+                    style_ids=style_ids,
+                    print_ids=print_ids,
+                    is_active=rule_data.is_active,
+                )
+                db.add(obj)
+                type2_by_position[rule_data.position_code] = obj
             type2_count += 1
             for style_code in rule_data.style_codes or []:
                 type2_style_position_keys.add((style_code, rule_data.position_code))
@@ -665,13 +764,31 @@ def _import_restrictions(ws, db: Session):
         seen_type3_keys.add(type3_key)
 
         try:
-            crud.create_style_position_rule(db, rule_data)
+            key = (style_code, rule_data.position_code)
+            print_ids = _codes_to_id_csv(rule_data.print_codes, prints_by_code)
+            existing = type3_by_style_position.get(key)
+            if existing:
+                existing.print_ids = _merge_nullable_rule_csv(existing.print_ids, print_ids)
+            else:
+                position = positions_by_code.get(rule_data.position_code)
+                obj = models.StylePositionRule(
+                    rule_type=3,
+                    position_id=position.id if position else None,
+                    style_ids=_codes_to_id_csv(rule_data.style_codes, styles_by_code),
+                    print_ids=print_ids,
+                    is_active=rule_data.is_active,
+                )
+                db.add(obj)
+                type3_by_style_position[key] = obj
             type3_count += 1
         except Exception as e:
             errors.append(f"第{row_num}行处理失败: {e}")
 
-    total_count = type1_count + type2_count + type3_count
-    return total_count, errors, filtered_count, skipped_duplicate_count
+    db.commit()
+
+    # create_style_position_rule may merge same-dimension rules, so return the persisted count.
+    total_count = db.query(models.StylePositionRule).count()
+    return total_count, errors, filtered_count, skipped_duplicate_count, warnings
 
 
 def _result(label: str, count: int, errors: list, stats: dict | None = None) -> schemas.ImportResult:
@@ -753,7 +870,7 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
         raise HTTPException(400, "请上传 .xlsx 或 .xls 文件")
     wb = _parse_wb(await file.read(), file.filename)
     ws = _first_sheet(wb, file.filename)
-    count, errors, filtered_count, skipped_duplicate_count = _import_restrictions(ws, db)
+    count, errors, filtered_count, skipped_duplicate_count, warnings = _import_restrictions(ws, db)
 
     # 构造返回消息
     msg = f"导入完成：限定 {count} 条"
@@ -763,6 +880,8 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
         msg += f"；已跳过 {skipped_duplicate_count} 条重复类型3记录"
     if errors:
         msg += f"；有 {len(errors)} 条错误"
+    if warnings:
+        msg += f"；有 {len(warnings)} 条提示"
 
     return schemas.ImportResult(
         success=len(errors) == 0,
@@ -774,6 +893,7 @@ async def import_restrictions(file: UploadFile = File(...), db: Session = Depend
                 "skipped_duplicate": skipped_duplicate_count,
             },
             "errors": errors[:5],
+            "warnings": warnings[:20],
         },
     )
 

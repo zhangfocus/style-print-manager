@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Button, Card, Upload, Alert, List, Row, Col, Typography, Space, Divider,
+  Button, Card, Upload, Alert, List, Row, Col, Typography, Space, Divider, Modal, Tag,
 } from 'antd'
 import {
   UploadOutlined, DownloadOutlined, FileExcelOutlined, InboxOutlined,
@@ -11,6 +11,7 @@ import { downloadTemplate, exportExcel, importEntity, type EntityKey } from '../
 
 const { Text } = Typography
 const { Dragger } = Upload
+const DETAIL_LIMIT = 20
 
 interface PanelConfig {
   key: EntityKey
@@ -56,6 +57,7 @@ function ImportPanel({ config }: { config: PanelConfig }) {
   const [state, setState] = useState<PanelState>({
     fileList: [], importing: false, result: null,
   })
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const update = (patch: Partial<PanelState>) =>
     setState(prev => ({ ...prev, ...patch }))
@@ -67,6 +69,7 @@ function ImportPanel({ config }: { config: PanelConfig }) {
     try {
       const res = await importEntity(config.key, file as File)
       update({ result: res })
+      setDetailOpen(true)
     } catch (e: unknown) {
       const msg = (e as Error).message
       update({
@@ -76,10 +79,17 @@ function ImportPanel({ config }: { config: PanelConfig }) {
           details: { counts: {}, errors: [msg] },
         },
       })
+      setDetailOpen(true)
     } finally {
       update({ importing: false })
     }
   }
+
+  const result = state.result
+  const errors = result?.details.errors ?? []
+  const warnings = result?.details.warnings ?? []
+  const counts = result?.details.counts ?? {}
+  const hasDetails = errors.length > 0 || warnings.length > 0 || Object.keys(counts).length > 0
 
   return (
     <Card
@@ -134,27 +144,80 @@ function ImportPanel({ config }: { config: PanelConfig }) {
           开始导入
         </Button>
 
-        {state.result && (
+        {result && (
           <div style={{ marginTop: 10 }}>
             <Alert
-              type={state.result.success ? 'success' : 'error'}
-              message={state.result.message}
+              type={result.success ? 'success' : 'error'}
+              message={result.message}
               showIcon
+              action={hasDetails ? (
+                <Button size="small" onClick={() => setDetailOpen(true)}>
+                  查看详情
+                </Button>
+              ) : undefined}
             />
-            {state.result.details.errors.length > 0 && (
-              <List
-                style={{ marginTop: 6, background: '#fff2f0', padding: '6px 10px', borderRadius: 6 }}
-                size="small"
-                dataSource={state.result.details.errors}
-                renderItem={item => (
-                  <List.Item style={{ padding: '2px 0', border: 'none' }}>
-                    <Text type="danger" style={{ fontSize: 12 }}>• {item}</Text>
-                  </List.Item>
-                )}
-              />
-            )}
           </div>
         )}
+
+        <Modal
+          title={`${config.label}导入结果`}
+          open={detailOpen}
+          onCancel={() => setDetailOpen(false)}
+          footer={null}
+          width={760}
+        >
+          {result && (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              <Alert
+                type={result.success ? 'success' : 'error'}
+                message={result.message}
+                showIcon
+              />
+
+              {Object.keys(counts).length > 0 && (
+                <Space wrap>
+                  {Object.entries(counts).map(([key, value]) => (
+                    <Tag key={key} color="blue">
+                      {key}: {value}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+
+              {errors.length > 0 && (
+                <div>
+                  <Text strong type="danger">错误明细（最多显示 {DETAIL_LIMIT} 条）</Text>
+                  <List
+                    style={{ marginTop: 8, background: '#fff2f0', padding: '6px 10px', borderRadius: 6, maxHeight: 220, overflow: 'auto' }}
+                    size="small"
+                    dataSource={errors.slice(0, DETAIL_LIMIT)}
+                    renderItem={item => (
+                      <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                        <Text type="danger" style={{ fontSize: 12 }}>{item}</Text>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+
+              {warnings.length > 0 && (
+                <div>
+                  <Text strong type="warning">提示明细（最多显示 {DETAIL_LIMIT} 条）</Text>
+                  <List
+                    style={{ marginTop: 8, background: '#fffbe6', padding: '6px 10px', borderRadius: 6, maxHeight: 260, overflow: 'auto' }}
+                    size="small"
+                    dataSource={warnings.slice(0, DETAIL_LIMIT)}
+                    renderItem={item => (
+                      <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                        <Text type="warning" style={{ fontSize: 12 }}>{item}</Text>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
+            </Space>
+          )}
+        </Modal>
       </div>
     </Card>
   )
