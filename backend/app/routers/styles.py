@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 from .. import crud, schemas
 from ..database import get_db
 
@@ -18,8 +17,61 @@ def get_styles_by_ids(ids: str = Query(..., description="逗号分隔的ID列表
 
 
 @router.get("/")
-def list_styles(keyword: str = Query("", description="搜索关键词"), page: int = 1, page_size: int = 10, db: Session = Depends(get_db)):
-    return crud.get_styles(db, page=page, page_size=page_size, keyword=keyword)
+def list_styles(
+    keyword: str = Query("", description="搜索关键词"),
+    search_field: str = Query("all", description="搜索字段"),
+    page: int = 1,
+    page_size: int = 10,
+    is_active: str | None = None,
+    year: int | None = None,
+    gender: str | None = None,
+    season: str | None = None,
+    category: str | None = None,
+    product_category: str | None = None,
+    brand_attr: str | None = None,
+    attr: str | None = None,
+    virtual_category: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {
+        "is_active": is_active,
+        "year": year,
+        "gender": gender,
+        "season": season,
+        "category": category,
+        "product_category": product_category,
+        "brand_attr": brand_attr,
+        "attr": attr,
+        "virtual_category": virtual_category,
+    }
+    return crud.get_styles(db, page=page, page_size=page_size, keyword=keyword, search_field=search_field, filters=filters)
+
+
+@router.get("/filter-options")
+def style_filter_options(
+    is_active: str | None = None,
+    year: int | None = None,
+    gender: str | None = None,
+    season: str | None = None,
+    category: str | None = None,
+    product_category: str | None = None,
+    brand_attr: str | None = None,
+    attr: str | None = None,
+    virtual_category: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {
+        "is_active": is_active,
+        "year": year,
+        "gender": gender,
+        "season": season,
+        "category": category,
+        "product_category": product_category,
+        "brand_attr": brand_attr,
+        "attr": attr,
+        "virtual_category": virtual_category,
+    }
+    return crud.get_style_filter_options(db, filters=filters)
 
 
 @router.get("/{style_id}", response_model=schemas.StyleOut)

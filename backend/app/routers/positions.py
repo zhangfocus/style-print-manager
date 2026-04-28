@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 from .. import crud, schemas
 from ..database import get_db
 
@@ -8,8 +7,27 @@ router = APIRouter(prefix="/api/positions", tags=["位置"])
 
 
 @router.get("/")
-def list_positions(keyword: str = Query("", description="搜索关键词"), page: int = 1, page_size: int = 10, db: Session = Depends(get_db)):
-    return crud.get_positions(db, page=page, page_size=page_size, keyword=keyword)
+def list_positions(
+    keyword: str = Query("", description="搜索关键词"),
+    search_field: str = Query("all", description="搜索字段"),
+    page: int = 1,
+    page_size: int = 10,
+    is_active: str | None = None,
+    area: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {"is_active": is_active, "area": area}
+    return crud.get_positions(db, page=page, page_size=page_size, keyword=keyword, search_field=search_field, filters=filters)
+
+
+@router.get("/filter-options")
+def position_filter_options(
+    is_active: str | None = None,
+    area: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {"is_active": is_active, "area": area}
+    return crud.get_position_filter_options(db, filters=filters)
 
 
 @router.get("/{position_id}", response_model=schemas.PositionOut)

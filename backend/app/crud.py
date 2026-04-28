@@ -4,18 +4,64 @@ from typing import Optional
 from . import models, schemas
 
 
+def _parse_bool(value: Optional[str]):
+    if value is None or value == "":
+        return None
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_keyword(q, model, keyword: str, search_field: str, default_fields: tuple[str, ...], allowed_fields: tuple[str, ...]):
+    if not keyword:
+        return q
+    if search_field and search_field != "all" and search_field in allowed_fields:
+        return q.filter(getattr(model, search_field).contains(keyword))
+    return q.filter(or_(*(getattr(model, field).contains(keyword) for field in default_fields)))
+
+
+def _apply_exact_filters(q, model, filters: dict, filter_fields: tuple[str, ...]):
+    for field in filter_fields:
+        value = filters.get(field)
+        if value is None or value == "":
+            continue
+        column = getattr(model, field)
+        if field == "is_active":
+            q = q.filter(column == _parse_bool(str(value)))
+        else:
+            q = q.filter(column == value)
+    return q
+
+
+def _get_filter_options(db: Session, model, option_fields: tuple[str, ...], filters: dict):
+    options = {}
+    for field in option_fields:
+        q = db.query(getattr(model, field)).distinct()
+        other_filters = {key: value for key, value in filters.items() if key != field}
+        q = _apply_exact_filters(q, model, other_filters, option_fields)
+        values = [row[0] for row in q.order_by(getattr(model, field)).all() if row[0] not in (None, "")]
+        options[field] = values
+    return options
+
+
 # ───── Style CRUD ─────
-def get_styles(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
+STYLE_DEFAULT_SEARCH_FIELDS = ("code", "product_code", "product_category")
+STYLE_SEARCH_FIELDS = (
+    "code", "product_code", "brand_attr", "attr", "gender", "season", "category",
+    "product_category", "virtual_category", "colors_active", "sizes", "printable_area", "fabric_name",
+)
+STYLE_FILTER_FIELDS = ("is_active", "year", "gender", "season", "category", "product_category", "brand_attr", "attr", "virtual_category")
+
+
+def get_styles(db: Session, page: int = 1, page_size: int = 10, keyword: str = "", search_field: str = "all", filters: Optional[dict] = None):
     q = db.query(models.Style)
-    if keyword:
-        q = q.filter(or_(
-            models.Style.code.contains(keyword),
-            models.Style.product_code.contains(keyword),
-            models.Style.product_category.contains(keyword),
-        ))
+    q = _apply_keyword(q, models.Style, keyword, search_field, STYLE_DEFAULT_SEARCH_FIELDS, STYLE_SEARCH_FIELDS)
+    q = _apply_exact_filters(q, models.Style, filters or {}, STYLE_FILTER_FIELDS)
     total = q.count()
     items = q.offset((page - 1) * page_size).limit(page_size).all()
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def get_style_filter_options(db: Session, filters: Optional[dict] = None):
+    return _get_filter_options(db, models.Style, STYLE_FILTER_FIELDS, filters or {})
 
 
 def get_style(db: Session, style_id: int):
@@ -54,17 +100,25 @@ def delete_style(db: Session, style_id: int):
 
 
 # ───── Print CRUD ─────
-def get_prints(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
+PRINT_DEFAULT_SEARCH_FIELDS = ("code", "name", "craft_attr")
+PRINT_SEARCH_FIELDS = (
+    "code", "name", "pattern_size", "pattern_spec", "craft_attr", "zwx_style_code",
+    "jwco_style_code", "city_style_code", "tangshi_style_code", "description",
+)
+PRINT_FILTER_FIELDS = ("is_active", "pattern_size", "pattern_spec", "craft_attr")
+
+
+def get_prints(db: Session, page: int = 1, page_size: int = 10, keyword: str = "", search_field: str = "all", filters: Optional[dict] = None):
     q = db.query(models.Print)
-    if keyword:
-        q = q.filter(or_(
-            models.Print.code.contains(keyword),
-            models.Print.name.contains(keyword),
-            models.Print.craft_attr.contains(keyword),
-        ))
+    q = _apply_keyword(q, models.Print, keyword, search_field, PRINT_DEFAULT_SEARCH_FIELDS, PRINT_SEARCH_FIELDS)
+    q = _apply_exact_filters(q, models.Print, filters or {}, PRINT_FILTER_FIELDS)
     total = q.count()
     items = q.offset((page - 1) * page_size).limit(page_size).all()
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def get_print_filter_options(db: Session, filters: Optional[dict] = None):
+    return _get_filter_options(db, models.Print, PRINT_FILTER_FIELDS, filters or {})
 
 
 def get_print(db: Session, print_id: int):
@@ -103,13 +157,22 @@ def delete_print(db: Session, print_id: int):
 
 
 # ───── Position CRUD ─────
-def get_positions(db: Session, page: int = 1, page_size: int = 10, keyword: str = ""):
+POSITION_DEFAULT_SEARCH_FIELDS = ("name", "code")
+POSITION_SEARCH_FIELDS = ("code", "name", "area", "description")
+POSITION_FILTER_FIELDS = ("is_active", "area")
+
+
+def get_positions(db: Session, page: int = 1, page_size: int = 10, keyword: str = "", search_field: str = "all", filters: Optional[dict] = None):
     q = db.query(models.Position)
-    if keyword:
-        q = q.filter(or_(models.Position.name.contains(keyword), models.Position.code.contains(keyword)))
+    q = _apply_keyword(q, models.Position, keyword, search_field, POSITION_DEFAULT_SEARCH_FIELDS, POSITION_SEARCH_FIELDS)
+    q = _apply_exact_filters(q, models.Position, filters or {}, POSITION_FILTER_FIELDS)
     total = q.count()
     items = q.offset((page - 1) * page_size).limit(page_size).all()
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+def get_position_filter_options(db: Session, filters: Optional[dict] = None):
+    return _get_filter_options(db, models.Position, POSITION_FILTER_FIELDS, filters or {})
 
 
 def get_position(db: Session, position_id: int):

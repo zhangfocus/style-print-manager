@@ -1,8 +1,12 @@
 import client from './client'
 import type { Style } from '../types'
+import type { FilterOptions, ListParams } from './filterTypes'
 
-export const listStyles = (keyword = '', page = 1, page_size = 10) =>
-  client.get<{ items: Style[]; total: number; page: number; page_size: number }>('/styles/', { params: { keyword, page, page_size } }).then(r => r.data)
+export const listStyles = (params: ListParams = {}) =>
+  client.get<{ items: Style[]; total: number; page: number; page_size: number }>('/styles/', { params: { page: 1, page_size: 10, ...params } }).then(r => r.data)
+
+export const getStyleFilterOptions = (params: ListParams = {}) =>
+  client.get<FilterOptions>('/styles/filter-options', { params }).then(r => r.data)
 
 export const createStyle = (data: Omit<Style, 'id' | 'created_at' | 'updated_at'>) =>
   client.post<Style>('/styles/', data).then(r => r.data)

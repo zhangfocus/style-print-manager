@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 from .. import crud, schemas
 from ..database import get_db
 
@@ -18,8 +17,41 @@ def get_prints_by_ids(ids: str = Query(..., description="逗号分隔的ID列表
 
 
 @router.get("/")
-def list_prints(keyword: str = Query("", description="搜索关键词"), page: int = 1, page_size: int = 10, db: Session = Depends(get_db)):
-    return crud.get_prints(db, page=page, page_size=page_size, keyword=keyword)
+def list_prints(
+    keyword: str = Query("", description="搜索关键词"),
+    search_field: str = Query("all", description="搜索字段"),
+    page: int = 1,
+    page_size: int = 10,
+    is_active: str | None = None,
+    pattern_size: str | None = None,
+    pattern_spec: str | None = None,
+    craft_attr: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {
+        "is_active": is_active,
+        "pattern_size": pattern_size,
+        "pattern_spec": pattern_spec,
+        "craft_attr": craft_attr,
+    }
+    return crud.get_prints(db, page=page, page_size=page_size, keyword=keyword, search_field=search_field, filters=filters)
+
+
+@router.get("/filter-options")
+def print_filter_options(
+    is_active: str | None = None,
+    pattern_size: str | None = None,
+    pattern_spec: str | None = None,
+    craft_attr: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = {
+        "is_active": is_active,
+        "pattern_size": pattern_size,
+        "pattern_spec": pattern_spec,
+        "craft_attr": craft_attr,
+    }
+    return crud.get_print_filter_options(db, filters=filters)
 
 
 @router.get("/{print_id}", response_model=schemas.PrintOut)

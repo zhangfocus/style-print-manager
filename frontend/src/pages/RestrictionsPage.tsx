@@ -117,7 +117,7 @@ export default function RestrictionsPage() {
     searchStylesDebounced.current = setTimeout(async () => {
       setStyleSearching(true)
       try {
-        const res = await listStyles(keyword, 1, 50)
+        const res = await listStyles({ keyword, page: 1, page_size: 50 })
         setStyles(res.items)
       } catch (e: unknown) {
         message.error((e as Error).message)
@@ -135,7 +135,7 @@ export default function RestrictionsPage() {
     searchPositionsDebounced.current = setTimeout(async () => {
       setPositionSearching(true)
       try {
-        const res = await listPositions(keyword, 1, 50)
+        const res = await listPositions({ keyword, page: 1, page_size: 50 })
         setPositions(res.items)
       } catch (e: unknown) {
         message.error((e as Error).message)
@@ -153,7 +153,7 @@ export default function RestrictionsPage() {
     searchPrintsDebounced.current = setTimeout(async () => {
       setPrintSearching(true)
       try {
-        const res = await listPrints(keyword, 1, 50)
+        const res = await listPrints({ keyword, page: 1, page_size: 50 })
         setPrints(res.items)
       } catch (e: unknown) {
         message.error((e as Error).message)

@@ -6,23 +6,55 @@ import {
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { TablePaginationConfig } from 'antd/es/table'
+import { useSearchParams } from 'react-router-dom'
 import type { Position } from '../types'
-import { listPositions, createPosition, updatePosition, deletePosition } from '../api/positions'
+import { listPositions, createPosition, updatePosition, deletePosition, getPositionFilterOptions } from '../api/positions'
+import type { FilterOptions, ListParams } from '../api/filterTypes'
+import FilterToolbar from '../components/filters/FilterToolbar'
 
 export default function PositionsPage() {
   const [data, setData] = useState<Position[]>([])
   const [loading, setLoading] = useState(false)
-  const [keyword, setKeyword] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Position | null>(null)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({})
 
-  const load = async (kw = keyword, page = pagination.current, pageSize = pagination.pageSize) => {
+  const filterKeys = ['is_active', 'area']
+
+  const getListParams = (): ListParams => {
+    const params: ListParams = {
+      keyword: searchParams.get('keyword') || '',
+      search_field: searchParams.get('search_field') || 'all',
+      page: Number(searchParams.get('page') || 1),
+      page_size: Number(searchParams.get('page_size') || 10),
+    }
+    filterKeys.forEach((key) => {
+      const value = searchParams.get(key)
+      if (value) params[key] = value
+    })
+    return params
+  }
+
+  const getFilterValues = () => Object.fromEntries(filterKeys.map(key => [key, searchParams.get(key) || '']))
+
+  const updateParams = (updates: Record<string, string | number | undefined>, resetPage = true) => {
+    const next = new URLSearchParams(searchParams)
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === undefined || value === '') next.delete(key)
+      else next.set(key, String(value))
+    })
+    if (resetPage) next.set('page', '1')
+    setSearchParams(next)
+  }
+
+  const load = async (params = getListParams()) => {
     setLoading(true)
     try {
-      const res = await listPositions(kw, page, pageSize)
+      const res = await listPositions(params)
       setData(res.items)
       setPagination({ current: res.page, pageSize: res.page_size, total: res.total })
     } catch (e: unknown) {
@@ -32,7 +64,13 @@ export default function PositionsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  const loadFilterOptions = async (params = getListParams()) => {
+    const filters = Object.fromEntries(filterKeys.map(key => [key, params[key]]).filter(([, value]) => value !== undefined && value !== ''))
+    try { setFilterOptions(await getPositionFilterOptions(filters)) }
+    catch (e: unknown) { message.error((e as Error).message) }
+  }
+
+  useEffect(() => { const params = getListParams(); load(params); loadFilterOptions(params) }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openCreate = () => {
     setEditing(null)
@@ -103,12 +141,30 @@ export default function PositionsPage() {
       title="位置管理"
       extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建位置</Button>}
     >
-      <Input.Search
-        placeholder="搜索编号或名称"
-        allowClear
-        style={{ width: 260, marginBottom: 16 }}
-        onSearch={kw => { setKeyword(kw); load(kw, 1, pagination.pageSize) }}
-        onChange={e => { if (!e.target.value) { setKeyword(''); load('', 1, pagination.pageSize) } }}
+      <FilterToolbar
+        keyword={searchParams.get('keyword') || ''}
+        searchField={searchParams.get('search_field') || 'all'}
+        searchFields={[
+          { label: '全部', value: 'all' },
+          { label: '位置编号', value: 'code' },
+          { label: '位置名称', value: 'name' },
+          { label: '区域', value: 'area' },
+          { label: '备注', value: 'description' },
+        ]}
+        filters={[
+          { key: 'is_active', label: '状态', options: [{ label: '启用', value: 'true' }, { label: '停用', value: 'false' }] },
+          { key: 'area', label: '区域', options: (filterOptions.area || []).map(value => ({ label: String(value), value })) },
+        ]}
+        values={getFilterValues()}
+        onSearchFieldChange={value => updateParams({ search_field: value })}
+        onKeywordSearch={value => updateParams({ keyword: value })}
+        onFilterChange={(key, value) => updateParams({ [key]: value })}
+        onReset={() => {
+          const next = new URLSearchParams()
+          next.set('page', '1')
+          next.set('page_size', String(pagination.pageSize))
+          setSearchParams(next)
+        }}
       />
       <Table
         rowKey="id"
@@ -123,7 +179,7 @@ export default function PositionsPage() {
           showTotal: t => `共 ${t} 条`,
         }}
         onChange={(next: TablePaginationConfig) => {
-          load(keyword, next.current || 1, next.pageSize || pagination.pageSize)
+          updateParams({ page: next.current || 1, page_size: next.pageSize || pagination.pageSize }, false)
         }}
         scroll={{ x: 700 }}
         size="small"
