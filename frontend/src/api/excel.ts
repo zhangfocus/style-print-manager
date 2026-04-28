@@ -24,3 +24,15 @@ export const importEntity = (entity: EntityKey, file: File): Promise<ImportResul
     })
     .then(r => r.data)
 }
+
+export const importMergeEntity = (entity: EntityKey, file: File, scope: string = 'all'): Promise<ImportResult> => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('scope', scope)
+  return client
+    .post<ImportResult>(`/excel/import/${entity}/merge`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+    .then(r => r.data)
+}

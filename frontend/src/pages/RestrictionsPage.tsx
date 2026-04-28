@@ -1,17 +1,23 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Table, Button, Modal, Form, Input, Switch, Popconfirm,
-  Space, Tag, message, Card, Select, Tabs, Pagination,
+  Space, Tag, message, Card, Select, Tabs, Pagination, Alert, List, Typography, Upload
 } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, ImportOutlined, DownloadOutlined, InboxOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import type { StylePositionRule, Style, Position, Print } from '../types'
+import type { UploadFile } from 'antd'
+import type { StylePositionRule, Style, Position, Print, ImportResult } from '../types'
 import {
   listRules, createRule, updateRule, deleteRule,
 } from '../api/restrictions'
 import { listStyles, getStylesByIds } from '../api/styles'
 import { listPositions } from '../api/positions'
 import { listPrints, getPrintsByIds } from '../api/prints'
+import { importMergeEntity, downloadTemplate } from '../api/excel'
+
+const { Text } = Typography
+const { Dragger } = Upload
+const DETAIL_LIMIT = 20
 
 type RuleType = 1 | 2 | 3  // 1=style_ban, 2=position_restriction, 3=style_position
 
@@ -45,6 +51,40 @@ export default function RestrictionsPage() {
   const [viewModalSearch, setViewModalSearch] = useState('')
   const [viewModalPage, setViewModalPage] = useState(1)
   const [viewModalPageSize, setViewModalPageSize] = useState(8)
+
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [importScope, setImportScope] = useState('all')
+  const [importFileList, setImportFileList] = useState<UploadFile[]>([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [importResultModalOpen, setImportResultModalOpen] = useState(false)
+
+  const handleImport = async () => {
+    const file = importFileList[0]?.originFileObj
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const res = await importMergeEntity('restrictions', file as File, importScope)
+      setImportResult(res)
+      setImportModalOpen(false)
+      setImportResultModalOpen(true)
+      if (res.success) {
+        load()
+        setImportFileList([])
+      }
+    } catch (e: unknown) {
+      const msg = (e as Error).message
+      setImportResult({
+        success: false,
+        message: msg,
+        details: { counts: {}, errors: [msg] },
+      })
+      setImportResultModalOpen(true)
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -519,9 +559,14 @@ export default function RestrictionsPage() {
             setFilterPrintId(undefined)
           }}
           tabBarExtraContent={
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateRule}>
-              新建规则
-            </Button>
+            <Space>
+              <Button icon={<ImportOutlined />} onClick={() => setImportModalOpen(true)}>
+                导入规则
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreateRule}>
+                新建规则
+              </Button>
+            </Space>
           }
           items={[
             {
@@ -797,6 +842,141 @@ export default function RestrictionsPage() {
           size="small"
           style={{ textAlign: 'right' }}
         />
+      </Modal>
+
+      {/* 导入Modal */}
+      <Modal
+        title="导入规则"
+        open={importModalOpen}
+        onCancel={() => !importing && setImportModalOpen(false)}
+        footer={null}
+        width={500}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <Alert
+            type="warning"
+            showIcon
+            message="合并导入注意"
+            description={
+              <ul style={{ paddingLeft: 20, margin: 0 }}>
+                <li>会合并到现有规则，不会删除未命中的旧规则</li>
+                <li>空字段会覆盖旧值为不限</li>
+                <li>任何一行解析错误，整个文件将不会写入</li>
+              </ul>
+            }
+          />
+
+          <div>
+            <div style={{ marginBottom: 8 }}>导入范围：</div>
+            <Select
+              value={importScope}
+              onChange={setImportScope}
+              style={{ width: '100%' }}
+              options={[
+                { value: 'all', label: '全部类型（推荐）' },
+                { value: '1', label: '仅款式全禁规则' },
+                { value: '2', label: '仅位置限定规则' },
+                { value: '3', label: '仅款式位置规则' },
+              ]}
+            />
+          </div>
+
+          <Dragger
+            accept=".xlsx,.xls"
+            maxCount={1}
+            fileList={importFileList}
+            beforeUpload={() => false}
+            onChange={({ fileList }) => setImportFileList(fileList)}
+            style={{ padding: '20px 0' }}
+          >
+            <p className="ant-upload-drag-icon">
+              <InboxOutlined />
+            </p>
+            <p className="ant-upload-text">点击或拖拽文件到此处</p>
+            <p className="ant-upload-hint">支持 .xlsx 或 .xls 格式</p>
+          </Dragger>
+
+          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => downloadTemplate('restrictions')}
+            >
+              下载模板
+            </Button>
+            <Space>
+              <Button onClick={() => setImportModalOpen(false)} disabled={importing}>取消</Button>
+              <Button
+                type="primary"
+                onClick={handleImport}
+                loading={importing}
+                disabled={importFileList.length === 0}
+              >
+                确认导入
+              </Button>
+            </Space>
+          </Space>
+        </Space>
+      </Modal>
+
+      {/* 导入结果Modal */}
+      <Modal
+        title="导入结果"
+        open={importResultModalOpen}
+        onCancel={() => setImportResultModalOpen(false)}
+        footer={null}
+        width={760}
+      >
+        {importResult && (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Alert
+              type={importResult.success ? 'success' : 'error'}
+              message={importResult.message}
+              showIcon
+            />
+
+            {importResult.details.counts && Object.keys(importResult.details.counts).length > 0 && (
+              <Space wrap>
+                {Object.entries(importResult.details.counts).map(([key, value]) => (
+                  <Tag key={key} color="blue">
+                    {key}: {value}
+                  </Tag>
+                ))}
+              </Space>
+            )}
+
+            {importResult.details.errors && importResult.details.errors.length > 0 && (
+              <div>
+                <Text strong type="danger">错误明细（最多显示 {DETAIL_LIMIT} 条）</Text>
+                <List
+                  style={{ marginTop: 8, background: '#fff2f0', padding: '6px 10px', borderRadius: 6, maxHeight: 220, overflow: 'auto' }}
+                  size="small"
+                  dataSource={importResult.details.errors.slice(0, DETAIL_LIMIT)}
+                  renderItem={item => (
+                    <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                      <Text type="danger" style={{ fontSize: 12 }}>{item}</Text>
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+
+            {importResult.details.warnings && importResult.details.warnings.length > 0 && (
+              <div>
+                <Text strong type="warning">提示明细（最多显示 {DETAIL_LIMIT} 条）</Text>
+                <List
+                  style={{ marginTop: 8, background: '#fffbe6', padding: '6px 10px', borderRadius: 6, maxHeight: 260, overflow: 'auto' }}
+                  size="small"
+                  dataSource={importResult.details.warnings.slice(0, DETAIL_LIMIT)}
+                  renderItem={item => (
+                    <List.Item style={{ padding: '4px 0', border: 'none' }}>
+                      <Text type="warning" style={{ fontSize: 12 }}>{item}</Text>
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+          </Space>
+        )}
       </Modal>
     </div>
   )
